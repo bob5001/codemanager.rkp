@@ -1,0 +1,35 @@
+# Cloudflare Tunnel configuration for codemanager.rkp
+#
+# Setup steps:
+#   1. brew install cloudflared
+#   2. cloudflared tunnel login
+#   3. cloudflared tunnel create codemanager
+#      → outputs a tunnel ID and credentials JSON file
+#   4. Replace TUNNEL_ID below with the real ID
+#   5. Move the credentials JSON to ~/.cloudflared/<TUNNEL_ID>.json
+#      (or update credentials-file to the real path)
+#   6. Create DNS records:
+#        cloudflared tunnel route dns codemanager codemanager-api.<your-domain>
+#        cloudflared tunnel route dns codemanager codemanager-mcp.<your-domain>
+#   7. Run the tunnel:
+#        cloudflared tunnel --config cloudflare/config.yml run
+#      Or via Docker (see docker-compose.yml tunnel service).
+#
+# The REST API (port 8007) and MCP SSE server (port 8008) are both exposed.
+# Claude Code connects to the MCP SSE endpoint at:
+#   https://codemanager-mcp.<your-domain>/sse
+
+tunnel: TUNNEL_ID
+credentials-file: /root/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  # REST API — register projects, query visits, log agents
+  - hostname: codemanager-api.example.com
+    service: http://host.docker.internal:8007
+
+  # MCP SSE server — for remote MCP clients (Claude Code over SSH, etc.)
+  - hostname: codemanager-mcp.example.com
+    service: http://host.docker.internal:8008
+
+  # Catch-all (required by cloudflared)
+  - service: http_status:404

@@ -1,0 +1,45 @@
+services:
+  # ── REST API ──────────────────────────────────────────────────────────────
+  codemanager:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8007:8007"   # REST API
+    env_file:
+      - .env
+    volumes:
+      - ./docs:/app/docs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── MCP SSE server ────────────────────────────────────────────────────────
+  # Run separately: python mcp_server.py --sse
+  # This service is not started by default (use --profile mcp to enable).
+  mcp:
+    build: .
+    command: ["python", "mcp_server.py", "--sse"]
+    restart: unless-stopped
+    ports:
+      - "8008:8008"   # MCP SSE
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - mcp
+
+  # ── Cloudflare Tunnel ─────────────────────────────────────────────────────
+  # Requires cloudflare/config.yml to be filled in with real tunnel ID.
+  # Enable with:  docker compose --profile tunnel up
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --config /etc/cloudflared/config.yml run
+    restart: unless-stopped
+    volumes:
+      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro
+      # Mount your tunnel credentials (created by `cloudflared tunnel create`):
+      - ~/.cloudflared:/root/.cloudflared:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - tunnel

@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PSQL=/opt/homebrew/Cellar/libpq/17.5/bin/psql)",
+      "Bash(PGPASSWORD=rkp_password $PSQL:*)",
+      "Read(//Users/robertkoch/rkp/**)",
+      "Read(//opt/**)",
+      "Bash(brew list:*)",
+      "Bash(PGPASSWORD=rkp_password /opt/homebrew/Cellar/libpq/17.5/bin/psql:*)",
+      "Bash(docker start:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(/Users/robertkoch/rkp/codemanager.rkp/reference/.venv/bin/python:*)",
+      "Bash(python3.12 -m venv:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/python -m pytest:*)"
+      "Bash(*)"
+    ],
+    "additionalDirectories": [
+      "/Users/robertkoch/rkp/codemanager.rkp/storage",
+      "/Users/robertkoch/rkp/codemanager.rkp/tests",
+      "/Users/robertkoch/rkp/codemanager.rkp"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git push --force*)",
+      "Bash(rm -rf*)"
+    ]
+  }
+}
