@@ -13,8 +13,10 @@
       "Bash(/Users/robertkoch/rkp/codemanager.rkp/reference/.venv/bin/python:*)",
       "Bash(python3.12 -m venv:*)",
       "Bash(.venv/bin/pip install:*)",
-      "Bash(.venv/bin/python -m pytest:*)"
-      "Bash(*)"
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)"
     ],
     "additionalDirectories": [
       "/Users/robertkoch/rkp/codemanager.rkp/storage",

@@ -135,3 +135,4 @@ Exposes the REST API and MCP SSE endpoint over HTTPS via your Cloudflare domain.
 ## Detailed guide
 
 See [docs/guide.md](docs/guide.md) for full human + agent documentation.
+

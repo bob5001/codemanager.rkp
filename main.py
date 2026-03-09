@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from config import settings
 
@@ -27,6 +28,13 @@ app = FastAPI(
 
 
 # -- Core routes ---------------------------------------------------------------
+
+@app.get("/", tags=["meta"], response_class=PlainTextResponse)
+async def root():
+    """Orientation doc for agents arriving at this service."""
+    with open("start.md") as f:
+        return f.read()
+
 
 @app.get("/health", tags=["meta"])
 async def health():
@@ -60,3 +68,10 @@ app.include_router(visits_router.router, prefix="/visits", tags=["visits"])
 from api.routes import search as search_router  # noqa: E402
 
 app.include_router(search_router.router, tags=["search"])
+
+
+# -- Dashboard -----------------------------------------------------------------
+
+from api.routes import dashboard as dashboard_router  # noqa: E402
+
+app.include_router(dashboard_router.router)

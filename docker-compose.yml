@@ -1,8 +1,23 @@
 services:
+  # ── Postgres + pgvector ───────────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rkp_core
+      POSTGRES_USER: rkp_user
+      POSTGRES_PASSWORD: rkp_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - rkp_pgdata:/var/lib/postgresql/data
+
   # ── REST API ──────────────────────────────────────────────────────────────
   codemanager:
     build: .
     restart: unless-stopped
+    depends_on:
+      - db
     ports:
       - "8007:8007"   # REST API
     env_file:
@@ -43,3 +58,6 @@ services:
       - "host.docker.internal:host-gateway"
     profiles:
       - tunnel
+
+volumes:
+  rkp_pgdata:
