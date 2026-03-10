@@ -338,8 +338,8 @@ async def get_visit_history(
 @mcp.tool()
 async def record_visit(
     project_id: str,
+    summary: str,
     query: str | None = None,
-    summary: str | None = None,
     usefulness: int | None = None,
     confidence: float | None = None,
     model_used: str | None = None,
@@ -352,8 +352,10 @@ async def record_visit(
 
     Args:
         project_id: UUID of the project you visited.
+        summary: REQUIRED. What you concluded — not what you did, but what you found.
+                 Write this for the next agent who has zero context.
+                 Only call this for projects you actually worked on.
         query: What you were trying to find or do.
-        summary: Key architectural insights, entry points, gotchas, conclusions.
         usefulness: 0=harmful 1=irrelevant 2=partial 3=useful 4=definitive
         confidence: Self-reported confidence 0.0–1.0
         model_used: Model that did the analysis, e.g. "claude-sonnet-4-6"
@@ -361,6 +363,12 @@ async def record_visit(
     pool = _pool_required()
     if _mcp_agent_id is None:
         return json.dumps({"error": "MCP system agent not initialised"})
+    if not summary or not summary.strip():
+        return json.dumps({
+            "error": "summary is required and must not be empty. "
+                     "Write what you concluded — not what you did, but what you found. "
+                     "Only log a visit for a project you actually worked on."
+        })
     visit = await log_visit(
         pool,
         project_id=project_id,

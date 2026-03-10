@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, field_validator
 
 from api.deps import get_current_agent
 from storage.database import get_pool
@@ -22,10 +22,21 @@ router = APIRouter()
 class VisitCreateRequest(BaseModel):
     project_id: str
     query: Optional[str] = None
-    summary: Optional[str] = None
+    summary: str
     usefulness: Optional[int] = None
     confidence: Optional[float] = None
     model_used: Optional[str] = None
+
+    @field_validator("summary")
+    @classmethod
+    def summary_must_not_be_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "summary is required and must not be empty. "
+                "Write what you concluded — not what you did, but what you found. "
+                "Only log a visit for a project you actually worked on."
+            )
+        return v
 
 
 def _serialize_visit(visit: dict) -> dict:

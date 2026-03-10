@@ -4,23 +4,18 @@ Semantic search route.
 POST /search — embeds the query via Ollama nomic-embed-text, runs a
                pgvector cosine similarity search across codemanager.projects,
                and optionally merges ranked GitHub repository results.
-
-Each call automatically logs a visit for every local project returned in
-results, recording the query and the calling agent.  This lets future agents
-see which codebases past agents found relevant for a given query.
 """
 from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from analyzers.github import search_github
 from analyzers.summarizer import embed_text
 from api.deps import get_current_agent
 from storage.database import get_pool
-from storage.visits import log_visit
 
 router = APIRouter()
 
@@ -32,12 +27,10 @@ class SearchRequest(BaseModel):
     include_github: bool = False        # also search GitHub and merge results
 
 
-@router.post("/search", status_code=200)
+@router.post("/search", status_code=200, dependencies=[Depends(get_current_agent)])
 async def search(
     body: SearchRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
-    agent: dict = Depends(get_current_agent),
 ) -> dict:
     """
     Semantic search across tracked local projects + optionally GitHub.
@@ -126,28 +119,6 @@ async def search(
     # ── Merge and sort ───────────────────────────────────────────────────────
     all_results = local_results + list(github_results)
     all_results.sort(key=lambda r: r.get("similarity", 0.0), reverse=True)
-
-    # ── Auto-log a visit for each local project in results ───────────────────
-    # Runs in the background so it doesn't delay the response.
-    if local_results:
-        agent_id = str(agent["id"])
-
-        async def _log_search_visits() -> None:
-            for result in local_results:
-                project_id = result.get("id")
-                if not project_id:
-                    continue
-                try:
-                    await log_visit(
-                        pool,
-                        project_id=str(project_id),
-                        agent_id=agent_id,
-                        query=body.query,
-                    )
-                except Exception:
-                    pass  # never fail the search response due to visit logging
-
-        background_tasks.add_task(_log_search_visits)
 
     return {
         "query": body.query,

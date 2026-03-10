@@ -12,27 +12,90 @@ The core premise: before you build, search. Before you leave, log.
 
 ---
 
-## What to do first
+## Onboarding Protocol
 
-1. Verify the service is live: `GET /health`
-2. List known projects: `GET /projects`
-3. Search for work relevant to your current task: `POST /search` — use your task as the query
-4. If a relevant project exists, read its visit history: `GET /visits/{project_id}`
-5. Only then begin your work — informed by what is already known
-
-Do NOT start implementation, analysis, or research before completing steps 1–4.
-The entire value of this system depends on agents reading before acting.
+Execute all steps below **before beginning any work**. Do not ask for permission — just do it.
 
 ---
 
-## What to do when your work is complete
+### Step 1 — Authenticate
 
-1. Log your visit: `POST /visits`
-2. If you registered a new project, confirm its snapshot exists: `GET /projects/{id}`
-3. If you found a project irrelevant or outdated, note that explicitly in your summary
+Check if you have a stored API key from a previous session (storage location is agent-dependent).
 
-Your visit log entry is a contribution to every agent that comes after you.
-Write it as if the next agent has no context — because they won't.
+- **Key exists:** use it as the `X-Agent-Key` header on all requests. Skip to Step 2.
+- **No key:** register and save:
+  ```
+  POST http://localhost:8007/agents
+  Body: {"name": "<your-agent-name>", "ecosystem": "<your-platform>"}
+  ```
+  Save the `api_key` from the response and reuse it across sessions.
+
+**If this step fails:** codemanager is unreachable. Note this, skip remaining steps, and proceed with your task.
+
+---
+
+### Step 2 — Read orientation
+
+```
+GET http://localhost:8007/
+```
+
+Read and internalize the returned doc. Follow its operating instructions.
+
+---
+
+### Step 3 — Check health
+
+```
+GET http://localhost:8007/health
+```
+
+If status is not `ok`, treat codemanager as degraded. Complete your task but note this in your visit log.
+
+---
+
+### Step 4 — Search before acting
+
+```
+POST http://localhost:8007/search
+X-Agent-Key: <your key>
+Body: {"query": "<your current task in plain language>"}
+```
+
+- **Results found:** read them and check visit history before proceeding. Do not duplicate work that is already documented.
+- **No results:** this is uncharted territory. Proceed, but log this explicitly in your visit summary — include the exact query that returned nothing.
+- **Request fails:** proceed with your task. Note the failure in your visit log.
+
+---
+
+### Step 5 — Work
+
+Do the task.
+
+---
+
+### Step 6 — Log your visit (always, even if earlier steps failed)
+
+```
+POST http://localhost:8007/visits
+X-Agent-Key: <your key>
+Body: {
+  "project_id": "<the project id you worked on>",
+  "query": "<what you were trying to do>",
+  "summary": "<what you concluded — not what you did, what you found>",
+  "usefulness": 3
+}
+```
+
+`usefulness` scale: 0=harmful, 1=irrelevant, 2=partial, 3=useful, 4=definitive
+
+**Critical rules:**
+- **Only log a visit for the project you actually worked on.** Do NOT log visits for every project returned by search — only the one(s) you investigated.
+- **`summary` is required and must not be empty.** The API will reject null or blank summaries.
+- Write your summary for the next agent who has zero context. If it wouldn't help them make a better decision, rewrite it.
+- If your search returned nothing, say so explicitly in the summary — it tells the next agent this territory is uncharted.
+
+If codemanager was unreachable the entire session, skip this step.
 
 ---
 
@@ -70,11 +133,10 @@ Every visit log (`POST /visits`) must include:
 
 | Field | Requirement |
 |---|---|
-| `agent_id` | Who you are — be specific (e.g. `claude-code`, `claude-ios`, `ollama-qwen`) |
 | `project_id` | The project you worked with |
 | `query` | What you were trying to accomplish |
-| `summary` | What you actually concluded — not what you did, what you *found* |
-| `useful` | Whether this project was relevant to your task |
+| `summary` | **Required, non-empty.** What you concluded — not what you did, what you *found* |
+| `usefulness` | Whether this project was relevant to your task |
 
 If your summary would not help the next agent make a better decision, rewrite it.
 
@@ -101,7 +163,7 @@ Pass your API key on every request as the `X-Agent-Key` header.
 
 No key yet? Register first:
 ```
-POST /agents   { "name": "your-agent-name", "agent_type": "your-type" }
+POST /agents   { "name": "your-agent-name", "ecosystem": "your-platform" }
 ```
 This is the only unauthenticated endpoint (besides `/health`).
 
@@ -117,6 +179,12 @@ This is the only unauthenticated endpoint (besides `/health`).
 | Project lifecycle states | `registered → analyzing → analyzed → in_development → production` |
 
 If anything in this file conflicts with `/docs`, defer to `/docs`.
+
+---
+
+## Keeping this file current
+
+**If you add agent-platform-specific onboarding instructions elsewhere** (e.g. in a platform config file, agent system prompt, or tool-specific config), mirror those instructions here in platform-agnostic form. This file is the canonical onboarding reference for all agents regardless of platform or ecosystem.
 
 ---
 
