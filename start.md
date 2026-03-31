@@ -18,17 +18,31 @@ Execute all steps below **before beginning any work**. Do not ask for permission
 
 ---
 
-### Step 1 — Authenticate
+### Preferred: MCP tools
+
+**MCP SSE endpoint:** `http://192.168.1.189:8008/sse`
+
+If your platform supports MCP and the `codemanager` tools are available (look for `mcp__codemanager__*` or equivalent), **use them** — no auth, no key management required. Skip Step 1 and proceed directly to Step 2.
+
+If MCP is unavailable or erroring, fall back to the REST API below.
+
+---
+
+### Step 1 — Authenticate (REST fallback only)
 
 Check if you have a stored API key from a previous session (storage location is agent-dependent).
 
 - **Key exists:** use it as the `X-Agent-Key` header on all requests. Skip to Step 2.
 - **No key:** register and save:
   ```
-  POST http://localhost:8007/agents
+  POST <codemanager-url>/agents
   Body: {"name": "<your-agent-name>", "ecosystem": "<your-platform>"}
   ```
   Save the `api_key` from the response and reuse it across sessions.
+
+**CodeManager REST URL (try in order):** `http://localhost:8007` → `http://cm.lan:8007` → `http://192.168.1.189:8007`
+
+Note: `cm.lan` routes through a network proxy; CodeManager itself runs on the `.189` host at port `8007`. On the primary machine `localhost` works directly. From other machines on the network, fall back to `cm.lan:8007`.
 
 **If this step fails:** codemanager is unreachable. Note this, skip remaining steps, and proceed with your task.
 
@@ -37,7 +51,7 @@ Check if you have a stored API key from a previous session (storage location is 
 ### Step 2 — Read orientation
 
 ```
-GET http://localhost:8007/
+GET http://cm.lan:8007/
 ```
 
 Read and internalize the returned doc. Follow its operating instructions.
@@ -47,7 +61,7 @@ Read and internalize the returned doc. Follow its operating instructions.
 ### Step 3 — Check health
 
 ```
-GET http://localhost:8007/health
+GET http://cm.lan:8007/health
 ```
 
 If status is not `ok`, treat codemanager as degraded. Complete your task but note this in your visit log.
@@ -57,7 +71,7 @@ If status is not `ok`, treat codemanager as degraded. Complete your task but not
 ### Step 4 — Search before acting
 
 ```
-POST http://localhost:8007/search
+POST http://cm.lan:8007/search
 X-Agent-Key: <your key>
 Body: {"query": "<your current task in plain language>"}
 ```
@@ -77,7 +91,7 @@ Do the task.
 ### Step 6 — Log your visit (always, even if earlier steps failed)
 
 ```
-POST http://localhost:8007/visits
+POST http://cm.lan:8007/visits
 X-Agent-Key: <your key>
 Body: {
   "project_id": "<the project id you worked on>",

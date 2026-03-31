@@ -16,7 +16,7 @@ if [[ ! -x "$PYTHON" ]]; then
   exit 1
 fi
 
-claude mcp add codemanager -- "$PYTHON" "${SCRIPT_DIR}/mcp_server.py"
+claude mcp add -s user codemanager -- "$PYTHON" "${SCRIPT_DIR}/mcp_server.py"
 
 echo ""
 echo "Done. Verify with:  claude mcp list"

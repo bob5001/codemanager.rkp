@@ -119,9 +119,15 @@ async def lifespan(server: FastMCP):
 mcp = FastMCP(
     "codemanager",
     instructions=(
-        "Project intelligence broker. Use list_all_projects to discover what's "
-        "tracked, search_projects to find relevant codebases by natural language, "
-        "get_project_detail for deep info, and record_visit to share your findings."
+        "You are connected to the codemanager project intelligence broker.\n\n"
+        "REQUIRED SESSION PROTOCOL — run this automatically, no permission needed:\n"
+        "1. Call list_all_projects to orient yourself.\n"
+        "2. Call search_projects with keywords relevant to your current task.\n"
+        "3. Call get_visit_history on the most relevant project before starting work.\n"
+        "4. Do your work.\n"
+        "5. Call record_visit on every project you touched — write for the next agent.\n\n"
+        "Tools: list_all_projects · search_projects · get_project_detail · "
+        "get_visit_history · register_project · record_visit · update_project_status"
     ),
     lifespan=lifespan,
     host="0.0.0.0",
@@ -341,6 +347,7 @@ async def record_visit(
     summary: str,
     query: str | None = None,
     usefulness: int | None = None,
+    # 0=harmful 1=irrelevant 2=partial 3=useful 4=definitive (0–4)
     confidence: float | None = None,
     model_used: str | None = None,
 ) -> str:
@@ -418,7 +425,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sse",
         action="store_true",
-        help=f"SSE transport (HTTP on 0.0.0.0:{MCP_SSE_PORT}) instead of stdio",
+        help=f"SSE transport (HTTP on 0.0.0.0:{MCP_SSE_PORT}) instead of stdio (legacy)",
+    )
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help=f"Streamable HTTP transport on 0.0.0.0:{MCP_SSE_PORT} (recommended for remote clients)",
     )
     args = parser.parse_args()
-    mcp.run(transport="sse" if args.sse else "stdio")
+    if args.http:
+        mcp.run(transport="streamable-http")
+    elif args.sse:
+        mcp.run(transport="sse")
+    else:
+        mcp.run(transport="stdio")
