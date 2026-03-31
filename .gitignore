@@ -13,3 +13,5 @@ dist/
 build/
 db/
 .env.local
+logs/
+.DS_Store
