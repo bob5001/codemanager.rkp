@@ -45,25 +45,29 @@ def _fmt(value) -> str:
     return str(value)
 
 
-def _pagination_controls(current_page: int, total_pages: int, base_url: str) -> str:
+def _pagination_controls(current_page: int, total_pages: int, base_url: str, page_param: str = "page") -> str:
     if total_pages <= 1:
         return ""
     parts = []
     if current_page > 1:
         parts.append(
-            f'<a href="{base_url}?page={current_page - 1}" class="page-btn">‹ Prev</a>'
+            f'<a href="{base_url}?{page_param}={current_page - 1}" class="page-btn">‹ Prev</a>'
         )
     parts.append(
         f'<span class="page-info">Page {current_page} of {total_pages}</span>'
     )
     if current_page < total_pages:
         parts.append(
-            f'<a href="{base_url}?page={current_page + 1}" class="page-btn">Next ›</a>'
+            f'<a href="{base_url}?{page_param}={current_page + 1}" class="page-btn">Next ›</a>'
         )
     return f'<div class="pagination">{"".join(parts)}</div>'
 
 
-def _render(projects, agents, visits, current_page: int = 1, total_pages: int = 1, total_visits: int = 0) -> str:
+def _render(
+    projects, agents, visits,
+    vis_page: int = 1, vis_total_pages: int = 1, total_visits: int = 0,
+    proj_page: int = 1, proj_total_pages: int = 1, total_projects: int = 0,
+) -> str:
     projects_rows = ""
     for p in projects:
         desc = p.get('description') or ''
@@ -172,7 +176,7 @@ def _render(projects, agents, visits, current_page: int = 1, total_pages: int = 
   <p class="subtitle">System dashboard — auto-refresh on load</p>
 
   <section>
-    <h2>Projects ({len(projects)})</h2>
+    <h2>Projects ({total_projects})</h2>
     <table>
       <thead><tr>
         <th>Name</th><th>Status</th><th>Description</th>
@@ -182,6 +186,7 @@ def _render(projects, agents, visits, current_page: int = 1, total_pages: int = 
         {projects_rows if projects else '<tr><td colspan="6" class="empty">No projects registered yet.</td></tr>'}
       </tbody>
     </table>
+    {_pagination_controls(proj_page, proj_total_pages, "/dashboard", page_param="ppage")}
   </section>
 
   <section>
@@ -206,21 +211,31 @@ def _render(projects, agents, visits, current_page: int = 1, total_pages: int = 
         {visits_rows if visits else '<tr><td colspan="5" class="empty">No visits logged yet.</td></tr>'}
       </tbody>
     </table>
-    {_pagination_controls(current_page, total_pages, "/dashboard")}
+    {_pagination_controls(vis_page, vis_total_pages, "/dashboard", page_param="page")}
   </section>
 </body>
 </html>"""
 
 
-PAGE_SIZE = 20
+VISITS_PAGE_SIZE = 20
+PROJECTS_PAGE_SIZE = 15
 
 
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-async def dashboard(request: Request, page: int = Query(default=1, ge=1)):
+async def dashboard(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    ppage: int = Query(default=1, ge=1),
+):
     pool = get_pool(request)
     async with pool.acquire() as conn:
+        total_projects = await conn.fetchval(
+            "SELECT COUNT(*) FROM codemanager.projects"
+        )
+        proj_offset = (ppage - 1) * PROJECTS_PAGE_SIZE
         projects = [dict(r) for r in await conn.fetch(
-            "SELECT * FROM codemanager.projects ORDER BY created_at DESC"
+            "SELECT * FROM codemanager.projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            PROJECTS_PAGE_SIZE, proj_offset,
         )]
         agents = [dict(r) for r in await conn.fetch(
             "SELECT * FROM codemanager.agents ORDER BY registered_at DESC"
@@ -228,7 +243,7 @@ async def dashboard(request: Request, page: int = Query(default=1, ge=1)):
         total_visits = await conn.fetchval(
             "SELECT COUNT(*) FROM codemanager.agent_visits"
         )
-        offset = (page - 1) * PAGE_SIZE
+        vis_offset = (page - 1) * VISITS_PAGE_SIZE
         visits = [dict(r) for r in await conn.fetch("""
             SELECT
                 v.*,
@@ -239,8 +254,14 @@ async def dashboard(request: Request, page: int = Query(default=1, ge=1)):
             LEFT JOIN codemanager.projects p ON p.id = v.project_id
             ORDER BY v.timestamp DESC
             LIMIT $1 OFFSET $2
-        """, PAGE_SIZE, offset)]
+        """, VISITS_PAGE_SIZE, vis_offset)]
 
-    total_pages = max(1, math.ceil(total_visits / PAGE_SIZE))
-    safe_page = min(page, total_pages)
-    return _render(projects, agents, visits, safe_page, total_pages, total_visits)
+    total_proj_pages = max(1, math.ceil(total_projects / PROJECTS_PAGE_SIZE))
+    safe_ppage = min(ppage, total_proj_pages)
+    total_vis_pages = max(1, math.ceil(total_visits / VISITS_PAGE_SIZE))
+    safe_page = min(page, total_vis_pages)
+    return _render(
+        projects, agents, visits,
+        safe_page, total_vis_pages, total_visits,
+        safe_ppage, total_proj_pages, total_projects,
+    )
