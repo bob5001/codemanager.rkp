@@ -24,6 +24,7 @@ services:
       - .env
     volumes:
       - ./docs:/app/docs
+      - ~/Projects:/Users/robertkoch/Projects:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
