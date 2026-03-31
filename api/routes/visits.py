@@ -14,7 +14,7 @@ from pydantic import BaseModel, field_validator
 
 from api.deps import get_current_agent
 from storage.database import get_pool
-from storage.visits import get_visits, log_visit
+from storage.visits import get_recent_visits, get_visits, log_visit
 
 router = APIRouter()
 
@@ -49,6 +49,23 @@ def _serialize_visit(visit: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+@router.get("/recent", status_code=200)
+async def list_recent_visits(
+    request: Request,
+    since: str,
+    limit: int = 200,
+    agent: dict = Depends(get_current_agent),
+) -> list[dict]:
+    """
+    Return visits across ALL projects since a given ISO timestamp.
+    Used by Jojo's daily digest for delta detection.
+    `since` must be an ISO 8601 timestamp, e.g. 2026-03-15T00:00:00Z
+    """
+    pool = get_pool(request)
+    visits = await get_recent_visits(pool, since, limit)
+    return [_serialize_visit(v) for v in visits]
 
 
 @router.get("/{project_id}", status_code=200)

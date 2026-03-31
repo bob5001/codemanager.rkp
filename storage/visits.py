@@ -7,6 +7,8 @@ plain dicts (never asyncpg Record objects).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import asyncpg
 
 from storage.database import acquire
@@ -66,4 +68,34 @@ async def get_visits(
     """
     async with acquire(pool) as conn:
         rows = await conn.fetch(sql, project_id, limit)
+        return [dict(r) for r in rows]
+
+
+async def get_recent_visits(
+    pool: asyncpg.Pool,
+    since: str | datetime,
+    limit: int = 200,
+) -> list[dict]:
+    """
+    Return visits across ALL projects since a given ISO timestamp, newest-first.
+    Used by Jojo's daily digest to detect what changed since the last run.
+    """
+    # asyncpg requires a datetime object, not an ISO string
+    if isinstance(since, str):
+        since = datetime.fromisoformat(since.replace("Z", "+00:00"))
+
+    sql = """
+        SELECT
+            av.*,
+            p.name AS project_name,
+            p.description AS project_description,
+            p.status AS project_status
+        FROM codemanager.agent_visits av
+        JOIN codemanager.projects p ON p.id = av.project_id
+        WHERE av.timestamp > $1::timestamptz
+        ORDER BY av.timestamp DESC
+        LIMIT $2
+    """
+    async with acquire(pool) as conn:
+        rows = await conn.fetch(sql, since, limit)
         return [dict(r) for r in rows]
