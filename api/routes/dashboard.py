@@ -5,7 +5,9 @@ No auth required. Read-only.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+import math
+
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
 from storage.database import get_pool
@@ -43,14 +45,40 @@ def _fmt(value) -> str:
     return str(value)
 
 
-def _render(projects, agents, visits) -> str:
+def _pagination_controls(current_page: int, total_pages: int, base_url: str) -> str:
+    if total_pages <= 1:
+        return ""
+    parts = []
+    if current_page > 1:
+        parts.append(
+            f'<a href="{base_url}?page={current_page - 1}" class="page-btn">‹ Prev</a>'
+        )
+    parts.append(
+        f'<span class="page-info">Page {current_page} of {total_pages}</span>'
+    )
+    if current_page < total_pages:
+        parts.append(
+            f'<a href="{base_url}?page={current_page + 1}" class="page-btn">Next ›</a>'
+        )
+    return f'<div class="pagination">{"".join(parts)}</div>'
+
+
+def _render(projects, agents, visits, current_page: int = 1, total_pages: int = 1, total_visits: int = 0) -> str:
     projects_rows = ""
     for p in projects:
+        desc = p.get('description') or ''
+        if len(desc) > 100:
+            desc_cell = (
+                f'<details><summary class="summary-preview">{desc[:100].rstrip()}…</summary>'
+                f'<span class="summary-full">{desc}</span></details>'
+            )
+        else:
+            desc_cell = _fmt(desc or None)
         projects_rows += f"""
         <tr>
           <td>{_fmt(p.get('name'))}</td>
           <td>{_status_badge(p.get('status',''))}</td>
-          <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{_fmt(p.get('description'))}</td>
+          <td style="max-width:300px">{desc_cell}</td>
           <td style="font-size:0.8rem;color:#6b7280">{_fmt(p.get('path') or p.get('github_url'))}</td>
           <td>{_fmt(p.get('last_analyzed'))}</td>
           <td>{_fmt(p.get('created_at'))}</td>
@@ -77,13 +105,22 @@ def _render(projects, agents, visits) -> str:
             useful_cell = '<span style="color:#dc2626">✗</span>'
 
         summary = v.get('summary') or ''
-        summary_short = (summary[:120] + '…') if len(summary) > 120 else summary
+        if not summary:
+            summary_cell = _fmt(None)
+        elif len(summary) > 120:
+            short = summary[:120].rstrip() + '…'
+            summary_cell = (
+                f'<details><summary class="summary-preview">{short}</summary>'
+                f'<span class="summary-full">{summary}</span></details>'
+            )
+        else:
+            summary_cell = summary
 
         visits_rows += f"""
         <tr>
           <td>{_fmt(v.get('agent_name'))}</td>
           <td>{_fmt(v.get('project_name'))}</td>
-          <td style="max-width:320px">{summary_short or _fmt(None)}</td>
+          <td style="max-width:380px">{summary_cell}</td>
           <td style="text-align:center">{useful_cell}</td>
           <td>{_fmt(v.get('timestamp'))}</td>
         </tr>"""
@@ -113,6 +150,21 @@ def _render(projects, agents, visits) -> str:
           border-top: 1px solid #f3f4f6; vertical-align: top; }}
     tr:hover td {{ background: #f9fafb; }}
     .empty {{ color: #9ca3af; font-size: 0.875rem; padding: 1rem; }}
+    details {{ cursor: pointer; }}
+    details summary {{ list-style: none; }}
+    details summary::-webkit-details-marker {{ display: none; }}
+    .summary-preview {{ color: #374151; }}
+    .summary-preview::after {{ content: " ▾"; color: #9ca3af; font-size: 0.7rem; }}
+    details[open] .summary-preview::after {{ content: " ▴"; }}
+    .summary-full {{ display: block; margin-top: 0.4rem; color: #374151;
+                     white-space: pre-wrap; line-height: 1.5; }}
+    .pagination {{ display: flex; align-items: center; gap: 0.75rem;
+                   margin-top: 0.75rem; justify-content: flex-end; }}
+    .page-btn {{ display: inline-block; padding: 0.35rem 0.85rem;
+                 background: #fff; border: 1px solid #d1d5db; border-radius: 6px;
+                 font-size: 0.8rem; color: #374151; text-decoration: none; }}
+    .page-btn:hover {{ background: #f3f4f6; }}
+    .page-info {{ font-size: 0.8rem; color: #6b7280; }}
   </style>
 </head>
 <body>
@@ -145,7 +197,7 @@ def _render(projects, agents, visits) -> str:
   </section>
 
   <section>
-    <h2>Recent Visits (last 20)</h2>
+    <h2>Visits ({total_visits})</h2>
     <table>
       <thead><tr>
         <th>Agent</th><th>Project</th><th>Summary</th><th>Useful</th><th>Time</th>
@@ -154,13 +206,17 @@ def _render(projects, agents, visits) -> str:
         {visits_rows if visits else '<tr><td colspan="5" class="empty">No visits logged yet.</td></tr>'}
       </tbody>
     </table>
+    {_pagination_controls(current_page, total_pages, "/dashboard")}
   </section>
 </body>
 </html>"""
 
 
+PAGE_SIZE = 20
+
+
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-async def dashboard(request: Request):
+async def dashboard(request: Request, page: int = Query(default=1, ge=1)):
     pool = get_pool(request)
     async with pool.acquire() as conn:
         projects = [dict(r) for r in await conn.fetch(
@@ -169,6 +225,10 @@ async def dashboard(request: Request):
         agents = [dict(r) for r in await conn.fetch(
             "SELECT * FROM codemanager.agents ORDER BY registered_at DESC"
         )]
+        total_visits = await conn.fetchval(
+            "SELECT COUNT(*) FROM codemanager.agent_visits"
+        )
+        offset = (page - 1) * PAGE_SIZE
         visits = [dict(r) for r in await conn.fetch("""
             SELECT
                 v.*,
@@ -178,7 +238,9 @@ async def dashboard(request: Request):
             LEFT JOIN codemanager.agents  a ON a.id = v.agent_id
             LEFT JOIN codemanager.projects p ON p.id = v.project_id
             ORDER BY v.timestamp DESC
-            LIMIT 20
-        """)]
+            LIMIT $1 OFFSET $2
+        """, PAGE_SIZE, offset)]
 
-    return _render(projects, agents, visits)
+    total_pages = max(1, math.ceil(total_visits / PAGE_SIZE))
+    safe_page = min(page, total_pages)
+    return _render(projects, agents, visits, safe_page, total_pages, total_visits)
