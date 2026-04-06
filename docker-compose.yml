@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: rkp_core
       POSTGRES_USER: rkp_user
-      POSTGRES_PASSWORD: rkp_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5433:5432"
     volumes:

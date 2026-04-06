@@ -35,10 +35,10 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env   # edit DB_HOST, tokens as needed
 
 # 4. Apply schema to your Postgres instance
-PGPASSWORD=rkp_password psql -h localhost -p 5433 -U rkp_user -d rkp_core -f schema.sql
+PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5433 -U rkp_user -d rkp_core -f schema.sql
 
 # 5. Apply the vector-dimension migration (768d for nomic-embed-text)
-PGPASSWORD=rkp_password psql -h localhost -p 5433 -U rkp_user -d rkp_core -f migrations/001_vector_768.sql
+PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5433 -U rkp_user -d rkp_core -f migrations/001_vector_768.sql
 
 # 6. Pull the Ollama models
 ollama pull qwen2.5-coder

@@ -25,10 +25,10 @@ This guide covers setup and daily use for two audiences:
 Apply the schema and vector migration in order:
 
 ```bash
-PGPASSWORD=rkp_password psql -h localhost -p 5433 -U rkp_user -d rkp_core \
+PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5433 -U rkp_user -d rkp_core \
   -f schema.sql
 
-PGPASSWORD=rkp_password psql -h localhost -p 5433 -U rkp_user -d rkp_core \
+PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5433 -U rkp_user -d rkp_core \
   -f migrations/001_vector_768.sql
 ```
 

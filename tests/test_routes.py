@@ -25,7 +25,10 @@ from asgi_lifespan import LifespanManager
 
 from main import app
 
-DB_DSN = "postgresql://rkp_user:rkp_password@localhost:5433/rkp_core"
+DB_DSN = (
+    f"postgresql://{os.getenv('DB_USER', 'rkp_user')}:{os.getenv('DB_PASSWORD', '')}"
+    f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5433')}/{os.getenv('DB_NAME', 'rkp_core')}"
+)
 
 
 # -- Fixtures -----------------------------------------------------------------

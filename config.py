@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     db_port: int = 5433
     db_name: str = "rkp_core"
     db_user: str = "rkp_user"
-    db_password: str = "rkp_password"
+    db_password: str
 
     # ── Ollama ─────────────────────────────────────────────────
     ollama_base_url: str = "http://localhost:11434"

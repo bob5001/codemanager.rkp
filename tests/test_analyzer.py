@@ -27,7 +27,10 @@ from analyzers.local import walk_project
 from analyzers.summarizer import embed_text, summarize_project
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_DSN = "postgresql://rkp_user:rkp_password@localhost:5433/rkp_core"
+DB_DSN = (
+    f"postgresql://{os.getenv('DB_USER', 'rkp_user')}:{os.getenv('DB_PASSWORD', '')}"
+    f"@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5433')}/{os.getenv('DB_NAME', 'rkp_core')}"
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

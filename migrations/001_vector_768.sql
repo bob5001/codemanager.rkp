@@ -2,7 +2,7 @@
 -- Reason: using nomic-embed-text via Ollama which produces 768-dim vectors.
 --
 -- Run with:
---   PGPASSWORD=rkp_password psql -h localhost -p 5433 -U rkp_user -d rkp_core \
+--   PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5433 -U rkp_user -d rkp_core \
 --     -f migrations/001_vector_768.sql
 
 BEGIN;
