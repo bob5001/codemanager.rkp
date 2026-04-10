@@ -28,15 +28,18 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # ── MCP SSE server ────────────────────────────────────────────────────────
-  # Run separately: python mcp_server.py --sse
+  # ── MCP server (streamable-http) ─────────────────────────────────────────
+  # Streamable-http transport avoids the SSE init-race that caused -32602 errors
+  # in Claude Desktop. Endpoint: http://192.168.1.189:8008/mcp
   # This service is not started by default (use --profile mcp to enable).
   mcp:
     build: .
-    command: ["python", "mcp_server.py", "--sse"]
+    command: ["python", "mcp_server.py", "--http"]
     restart: unless-stopped
+    depends_on:
+      - db
     ports:
-      - "8008:8008"   # MCP SSE
+      - "8008:8008"   # MCP streamable-http
     env_file:
       - .env
     extra_hosts:

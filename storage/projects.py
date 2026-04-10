@@ -203,6 +203,16 @@ async def update_project(
         return _project_row(row) if row is not None else None
 
 
+async def delete_project(pool: asyncpg.Pool, project_id: str) -> bool:
+    """Delete a project by UUID. Returns True if deleted, False if not found."""
+    async with acquire(pool) as conn:
+        result = await conn.execute(
+            "DELETE FROM codemanager.projects WHERE id = $1::uuid",
+            project_id,
+        )
+        return result == "DELETE 1"
+
+
 # ── Snapshots ─────────────────────────────────────────────────────────────────
 
 async def create_snapshot(

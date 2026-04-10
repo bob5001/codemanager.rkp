@@ -132,6 +132,54 @@ docker compose --profile tunnel up
 
 Exposes the REST API and MCP SSE endpoint over HTTPS via your Cloudflare domain.
 
+## Testing and troubleshooting the MCP
+
+The MCP server runs as a stdio subprocess launched by Claude Code — it's separate from the Docker REST API container.
+
+**Verify the MCP is registered:**
+```bash
+claude mcp list
+# Should show: codemanager → /path/to/.venv/bin/python mcp_server.py
+```
+
+**Test a tool call directly** (no Claude needed):
+```bash
+.venv/bin/python - <<'EOF'
+import asyncio, mcp_server
+async def test():
+    result = await mcp_server.list_all_projects()
+    print(result)
+asyncio.run(test())
+EOF
+```
+
+**MCP not showing up in Claude Code?** Re-register it:
+```bash
+bash register_mcp.sh
+# Then restart Claude Code for the new registration to take effect
+```
+
+**Tools failing with a DB auth error?**
+The MCP subprocess loads `.env` at startup. If you rotated `DB_PASSWORD` mid-session, the running subprocess has stale creds. Restart Claude Code to reload.
+
+**SSE transport (port 8008) vs stdio:**
+- Claude Code uses **stdio** — `mcp_server.py` runs as a direct subprocess, no HTTP.
+- The `--profile mcp` Docker service exposes **SSE on port 8008** for other MCP clients (Cursor, etc.).
+- Restarting the Docker MCP container does not affect the Claude Code stdio connection.
+
+**Check the SSE container:**
+```bash
+docker compose --profile mcp logs mcp --tail=20
+curl http://localhost:8008/health
+```
+
+**Password change checklist** — after rotating `DB_PASSWORD`:
+1. Update `.env`
+2. `ALTER USER rkp_user PASSWORD '...'` in Postgres
+3. `docker compose restart codemanager` (REST API)
+4. `docker compose up -d --force-recreate mcp` (SSE container)
+5. Restart Claude Code (stdio MCP subprocess)
+
 ## Detailed guide
 
 See [docs/guide.md](docs/guide.md) for full human + agent documentation.

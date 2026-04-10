@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_HERE = Path(__file__).parent
 
 
 class Settings(BaseSettings):
@@ -33,7 +37,10 @@ class Settings(BaseSettings):
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
 
-    model_config = {"env_file": [".env", ".env.local"], "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": [str(_HERE / ".env"), str(_HERE / ".env.local")],
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()
