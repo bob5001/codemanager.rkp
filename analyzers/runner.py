@@ -49,6 +49,7 @@ async def analyze_project(pool: asyncpg.Pool, project_id: str, path: str) -> Non
             summary=summary,
             embedding=embedding,
             status="analyzed",
+            status_note="",
             last_analyzed=datetime.now(timezone.utc),
         )
 

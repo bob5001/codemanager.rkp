@@ -19,6 +19,7 @@ from api.deps import get_current_agent
 from storage.database import get_pool
 from storage.projects import (
     create_project,
+    delete_project,
     get_project,
     list_projects,
     update_project,
@@ -97,6 +98,35 @@ async def create_new_project(
         background_tasks.add_task(analyze_project, pool, project_id, project["path"])
 
     return _serialize_project(project)
+
+
+@router.post("/{project_id}/analyze", status_code=202)
+async def re_analyze_project(
+    project_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(get_current_agent),
+) -> dict:
+    pool = get_pool(request)
+    project = await get_project(pool, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+    if not project.get("path"):
+        raise HTTPException(status_code=422, detail="Project has no local path — cannot analyze")
+    background_tasks.add_task(analyze_project, pool, project_id, project["path"])
+    return {"status": "accepted", "project_id": project_id, "path": project["path"]}
+
+
+@router.delete("/{project_id}", status_code=204, response_model=None)
+async def delete_one_project(
+    project_id: str,
+    request: Request,
+    agent: dict = Depends(get_current_agent),
+) -> None:
+    pool = get_pool(request)
+    deleted = await delete_project(pool, project_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
 
 @router.patch("/{project_id}", status_code=200)
