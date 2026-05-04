@@ -44,6 +44,7 @@ from storage.projects import (  # noqa: E402
     create_project,
     get_latest_snapshot,
     get_project,
+    get_project_by_path,
     list_projects,
     update_project,
 )
@@ -121,12 +122,16 @@ mcp = FastMCP(
     instructions=(
         "You are connected to the codemanager project intelligence broker.\n\n"
         "REQUIRED SESSION PROTOCOL — run this automatically, no permission needed:\n"
+        "0. Look for codemanager.md in your current working directory.\n"
+        "   - Found: read codemanager_id from the frontmatter, call get_project_detail(id). Done — skip steps 1-2.\n"
+        "   - Not found: continue to step 1. After registering, write codemanager.md to the project root.\n"
         "1. Call list_all_projects to orient yourself.\n"
         "2. Call search_projects with keywords relevant to your current task.\n"
+        "   Before registering a new project, call get_project_by_path_tool to check for an existing record.\n"
         "3. Call get_visit_history on the most relevant project before starting work.\n"
         "4. Do your work.\n"
         "5. Call record_visit on every project you touched — write for the next agent.\n\n"
-        "Tools: list_all_projects · search_projects · get_project_detail · "
+        "Tools: list_all_projects · search_projects · get_project_detail · get_project_by_path_tool · "
         "get_visit_history · register_project · record_visit · update_project_status"
     ),
     lifespan=lifespan,
@@ -174,6 +179,28 @@ async def get_project_detail(project_id: str) -> str:
         snapshot.pop("embedding", None)
         row["latest_snapshot"] = _serialize(snapshot)
     return json.dumps(_serialize(row), indent=2)
+
+
+@mcp.tool()
+async def get_project_by_path_tool(path: str) -> str:
+    """
+    Look up a registered project by its filesystem path.
+
+    Use this when codemanager.md is missing from a project root — it lets you
+    check whether the project is already registered (and get its ID) before
+    creating a duplicate entry.
+
+    Args:
+        path: Absolute filesystem path to the project root.
+    """
+    pool = _pool_required()
+    row = await get_project_by_path(pool, path)
+    if row is None:
+        return json.dumps({"found": False, "path": path})
+    row.pop("embedding", None)
+    result = _serialize(row)
+    result["found"] = True
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()

@@ -203,6 +203,26 @@ async def update_project(
         return _project_row(row) if row is not None else None
 
 
+async def get_project_by_path(
+    pool: asyncpg.Pool,
+    path: str,
+) -> dict | None:
+    """
+    Fetch the most recently created project matching a given filesystem path.
+
+    Returns None if no project with that path exists.
+    """
+    sql = """
+        SELECT * FROM codemanager.projects
+        WHERE path = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+    """
+    async with acquire(pool) as conn:
+        row = await conn.fetchrow(sql, path)
+        return _project_row(row) if row is not None else None
+
+
 async def delete_project(pool: asyncpg.Pool, project_id: str) -> bool:
     """Delete a project by UUID. Returns True if deleted, False if not found."""
     async with acquire(pool) as conn:

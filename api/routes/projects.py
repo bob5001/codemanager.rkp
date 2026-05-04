@@ -21,6 +21,7 @@ from storage.projects import (
     create_project,
     delete_project,
     get_project,
+    get_project_by_path,
     list_projects,
     update_project,
 )
@@ -62,6 +63,20 @@ async def list_all_projects(
     pool = get_pool(request)
     projects = await list_projects(pool, status_filter=status)
     return [_serialize_project(p) for p in projects]
+
+
+@router.get("/by-path", status_code=200)
+async def get_project_by_path_route(
+    path: str,
+    request: Request,
+    agent: dict = Depends(get_current_agent),
+) -> dict:
+    """Look up a project by its filesystem path. Used to cross-reference codemanager.md."""
+    pool = get_pool(request)
+    project = await get_project_by_path(pool, path)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"No project found at path: {path}")
+    return _serialize_project(project)
 
 
 @router.get("/{project_id}", status_code=200)

@@ -28,6 +28,44 @@ If MCP is unavailable or erroring, fall back to the REST API below.
 
 ---
 
+### Step 0 — Check for codemanager.md (fastest path, both MCP and REST)
+
+Before any search or list call, look for `codemanager.md` in the root of your current working directory.
+
+**File found:**
+- Read the `codemanager_id` from the YAML frontmatter block at the top of the file:
+  ```
+  ---
+  codemanager_id: <uuid>
+  name: <project name>
+  ---
+  ```
+- Use that UUID to fetch the project directly:
+  - MCP: `get_project_detail(codemanager_id)`, then `get_visit_history(codemanager_id)`
+  - REST: `GET /projects/<codemanager_id>` and `GET /visits/<codemanager_id>`
+- Log your visit against that ID when done
+- **Skip Steps 2–4** (search and list are unnecessary — you have a direct identity)
+
+**File not found:**
+- Check whether the project is already registered before creating a new entry:
+  - MCP: `get_project_by_path_tool(path)` with your working directory
+  - REST: `GET /projects/by-path?path=<your working directory>`
+- If a record is found: write `codemanager.md` (recovery flow), proceed with work
+- If no record is found: confirm with the user that this project is unregistered, then register it and write `codemanager.md` to the project root
+
+**codemanager.md format** (write exactly this structure):
+```
+---
+codemanager_id: <uuid returned by register>
+name: <project name>
+---
+This file anchors the project to its codemanager record.
+Agents: read `codemanager_id` and call `get_project_detail` — no search needed.
+Do not delete or move this file.
+```
+
+---
+
 ### Step 1 — Authenticate (REST fallback only)
 
 Check if you have a stored API key from a previous session (storage location is agent-dependent).
@@ -123,9 +161,11 @@ Starting a new task in an unfamiliar codebase or domain.
 
 **Registration Mode**
 Encountered a project that isn't tracked yet.
+- First check: `GET /projects/by-path?path=<cwd>` (or MCP: `get_project_by_path_tool`) — avoid creating a duplicate
+- Confirm with user before registering
 - `POST /projects` with path and description
+- Write `codemanager.md` to the project root with the returned UUID
 - Wait for analysis to complete (status: `analyzing` → `analyzed`)
-- Verify `start.md` was generated in `docs/{project_name}/`
 
 **Continuation Mode**
 Picking up work a previous agent started.
