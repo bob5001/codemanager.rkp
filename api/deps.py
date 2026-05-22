@@ -34,4 +34,7 @@ async def get_current_agent(
     if agent is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+    if agent.get("status") == "pending":
+        raise HTTPException(status_code=403, detail="Registration pending admin approval")
+
     return agent

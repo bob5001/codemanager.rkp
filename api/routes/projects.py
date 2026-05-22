@@ -10,6 +10,7 @@ PATCH /projects/{project_id} - update status / status_note / description
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -81,12 +82,12 @@ async def get_project_by_path_route(
 
 @router.get("/{project_id}", status_code=200)
 async def get_one_project(
-    project_id: str,
+    project_id: UUID,
     request: Request,
     agent: dict = Depends(get_current_agent),
 ) -> dict:
     pool = get_pool(request)
-    project = await get_project(pool, project_id)
+    project = await get_project(pool, str(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
     return _serialize_project(project)
@@ -117,43 +118,43 @@ async def create_new_project(
 
 @router.post("/{project_id}/analyze", status_code=202)
 async def re_analyze_project(
-    project_id: str,
+    project_id: UUID,
     request: Request,
     background_tasks: BackgroundTasks,
     agent: dict = Depends(get_current_agent),
 ) -> dict:
     pool = get_pool(request)
-    project = await get_project(pool, project_id)
+    project = await get_project(pool, str(project_id))
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
     if not project.get("path"):
         raise HTTPException(status_code=422, detail="Project has no local path — cannot analyze")
-    background_tasks.add_task(analyze_project, pool, project_id, project["path"])
-    return {"status": "accepted", "project_id": project_id, "path": project["path"]}
+    background_tasks.add_task(analyze_project, pool, str(project_id), project["path"])
+    return {"status": "accepted", "project_id": str(project_id), "path": project["path"]}
 
 
 @router.delete("/{project_id}", status_code=204, response_model=None)
 async def delete_one_project(
-    project_id: str,
+    project_id: UUID,
     request: Request,
     agent: dict = Depends(get_current_agent),
 ) -> None:
     pool = get_pool(request)
-    deleted = await delete_project(pool, project_id)
+    deleted = await delete_project(pool, str(project_id))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
 
 @router.patch("/{project_id}", status_code=200)
 async def patch_project(
-    project_id: str,
+    project_id: UUID,
     body: ProjectPatchRequest,
     request: Request,
     agent: dict = Depends(get_current_agent),
 ) -> dict:
     pool = get_pool(request)
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
-    updated = await update_project(pool, project_id, **fields)
+    updated = await update_project(pool, str(project_id), **fields)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
     return _serialize_project(updated)

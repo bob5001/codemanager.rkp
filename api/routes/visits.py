@@ -8,8 +8,9 @@ POST /visits              - log a new agent visit
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 
 from api.deps import get_current_agent
@@ -55,7 +56,7 @@ def _serialize_visit(visit: dict) -> dict:
 async def list_recent_visits(
     request: Request,
     since: str,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=1000),
     agent: dict = Depends(get_current_agent),
 ) -> list[dict]:
     """
@@ -63,21 +64,24 @@ async def list_recent_visits(
     Used by Jojo's daily digest for delta detection.
     `since` must be an ISO 8601 timestamp, e.g. 2026-03-15T00:00:00Z
     """
-    pool = get_pool(request)
-    visits = await get_recent_visits(pool, since, limit)
+    try:
+        pool = get_pool(request)
+        visits = await get_recent_visits(pool, since, limit)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid `since` timestamp — use ISO 8601, e.g. 2026-03-15T00:00:00Z")
     return [_serialize_visit(v) for v in visits]
 
 
 @router.get("/{project_id}", status_code=200)
 async def list_visits(
-    project_id: str,
+    project_id: UUID,
     request: Request,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=500),
     agent: dict = Depends(get_current_agent),
 ) -> list[dict]:
     """Return up to limit visits for a project, newest first."""
     pool = get_pool(request)
-    visits = await get_visits(pool, project_id, limit)
+    visits = await get_visits(pool, str(project_id), limit)
     return [_serialize_visit(v) for v in visits]
 
 

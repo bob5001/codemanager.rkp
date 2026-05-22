@@ -41,7 +41,7 @@ ollama pull qwen2.5-coder    # project summarisation (~4GB)
 ollama pull nomic-embed-text # 768-dim embeddings (~274MB)
 ```
 
-Both must be available before analysis or search will work. If Ollama is unreachable, `embed_text()` falls back to a deterministic stub — search will run but results will be meaningless.
+Both must be available before analysis or search will work. If Ollama is unreachable during analysis, the project moves to `stuck` status with a `status_note` explaining the error. Re-trigger with `POST /projects/{id}/analyze` once Ollama is back.
 
 **3. Environment**
 
@@ -107,6 +107,24 @@ For Claude Desktop, add to `~/.claude/claude_desktop_config.json`:
   }
 }
 ```
+
+### Agent registration & approval
+
+By default, `POST /agents` is open. Set `ADMIN_KEY` in `.env` to require admin approval before new agents can use the API.
+
+Generate a key:
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+With `ADMIN_KEY` set, new agents register with `status: pending`. They receive their API key immediately but all calls return `403` until approved. Approve via the dashboard (`http://localhost:8007/dashboard` → Pending Registrations → Approve button) or via CLI:
+
+```bash
+curl -s -X POST http://localhost:8007/agents/<agent_id>/approve \
+  -H "X-Admin-Key: <your_admin_key>"
+```
+
+Without `ADMIN_KEY`, all registrations are auto-approved (appropriate for personal/trusted-LAN installs).
 
 ### Adding a project manually
 
@@ -204,7 +222,7 @@ Content-Type: application/json
 
 Response includes `local_count` (projects in this instance's DB) and `github_count` (if `include_github` was true). Each result has a `similarity` score (0–1, higher is better) and a `source` field (`"local"` or `"github"`).
 
-Note: **Every search automatically logs a visit** for each local project that appears in results, recording your query. This feeds the collective knowledge base.
+Results include a `similarity` score (0–1) and a `source` field (`"local"` or `"github"`). Local results are ranked by pgvector cosine similarity; GitHub results are embedded and ranked in-process.
 
 ### Step 4: Read visit history before working on a project
 
@@ -385,7 +403,7 @@ Updates lifecycle status. Use `status_note` to pin a specific blocker or milesto
 `POST /projects` with a `path` triggers `analyzers/runner.py`:
 1. `walk_project(path)` — traverses the filesystem, skipping `.venv`, `node_modules`, `.git`, etc. Extracts file tree, language counts, entry points, key files.
 2. `summarize_project(walk_result)` — sends a structured prompt to Ollama (`qwen2.5-coder`) and gets a 2–4 sentence summary.
-3. `embed_text(summary)` — calls Ollama (`nomic-embed-text`) for a 768-dim embedding. Falls back to a seeded stub if Ollama is unreachable.
+3. `embed_text(summary)` — calls Ollama (`nomic-embed-text`) for a 768-dim embedding. If Ollama is unreachable, the exception propagates and the project is marked `stuck`.
 4. Creates a snapshot row with the file tree and key findings as JSONB.
 5. Updates the project with `status=analyzed`, `summary`, and `last_analyzed`.
 

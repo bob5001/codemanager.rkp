@@ -8,13 +8,16 @@ GET  /agents/me    — authenticated via X-Agent-Key header, returns calling age
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.deps import get_current_agent
-from storage.agents import create_agent
+from config import settings
+from storage.agents import approve_agent, create_agent
 from storage.database import get_pool
 
 router = APIRouter()
@@ -25,7 +28,7 @@ router = APIRouter()
 class AgentRegisterRequest(BaseModel):
     name: str
     ecosystem: str
-    capabilities: list[str] = []
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class AgentResponse(BaseModel):
@@ -35,6 +38,7 @@ class AgentResponse(BaseModel):
     name: str
     ecosystem: str
     capabilities: list[str]
+    status: str
     registered_at: str   # ISO 8601 string
     last_seen: str | None = None
 
@@ -59,6 +63,7 @@ def _serialize_agent(agent: dict, *, api_key: str | None = None) -> dict:
         "name": agent["name"],
         "ecosystem": agent["ecosystem"],
         "capabilities": agent["capabilities"],
+        "status": agent.get("status", "active"),
         "registered_at": agent["registered_at"].isoformat(),
         "last_seen": agent["last_seen"].isoformat() if agent.get("last_seen") else None,
     }
@@ -80,6 +85,7 @@ async def register_agent(body: AgentRegisterRequest, request: Request) -> AgentR
     """
     plaintext_key = secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(plaintext_key.encode()).hexdigest()
+    status = "pending" if settings.admin_key else "active"
 
     pool = get_pool(request)
     agent = await create_agent(
@@ -88,10 +94,37 @@ async def register_agent(body: AgentRegisterRequest, request: Request) -> AgentR
         ecosystem=body.ecosystem,
         api_key_hash=key_hash,
         capabilities=body.capabilities,
+        status=status,
     )
 
     data = _serialize_agent(agent, api_key=plaintext_key)
     return AgentRegisterResponse(**data)
+
+
+@router.post("/{agent_id}/approve", response_model=AgentResponse, status_code=200)
+async def approve_agent_registration(
+    agent_id: UUID,
+    request: Request,
+    x_admin_key: str | None = Header(default=None),
+) -> AgentResponse:
+    """
+    Approve a pending agent registration.
+
+    Requires the X-Admin-Key header to match the ADMIN_KEY environment variable.
+    Once approved, the agent can authenticate normally with its API key.
+    """
+    if not settings.admin_key:
+        raise HTTPException(status_code=403, detail="Admin approval is not configured (ADMIN_KEY not set)")
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.admin_key):
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    pool = get_pool(request)
+    agent = await approve_agent(pool, str(agent_id))
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    data = _serialize_agent(agent)
+    return AgentResponse(**data)
 
 
 @router.get("/me", response_model=AgentResponse)

@@ -5,6 +5,7 @@ No auth required. Read-only.
 
 from __future__ import annotations
 
+import html
 import math
 
 from fastapi import APIRouter, Query, Request
@@ -33,7 +34,7 @@ def _status_badge(status: str) -> str:
     color = STATUS_COLORS.get(status, "#6b7280")
     return (
         f'<span style="background:{color};color:#fff;padding:2px 8px;'
-        f'border-radius:4px;font-size:0.75rem;font-weight:600;">{status}</span>'
+        f'border-radius:4px;font-size:0.75rem;font-weight:600;">{html.escape(status)}</span>'
     )
 
 
@@ -41,8 +42,8 @@ def _fmt(value) -> str:
     if value is None:
         return '<span style="color:#9ca3af">—</span>'
     if hasattr(value, "strftime"):
-        return value.strftime("%Y-%m-%d %H:%M")
-    return str(value)
+        return html.escape(value.strftime("%Y-%m-%d %H:%M"))
+    return html.escape(str(value))
 
 
 def _pagination_controls(current_page: int, total_pages: int, base_url: str, page_param: str = "page") -> str:
@@ -64,17 +65,31 @@ def _pagination_controls(current_page: int, total_pages: int, base_url: str, pag
 
 
 def _render(
-    projects, agents, visits,
+    projects, agents, visits, pending_agents,
     vis_page: int = 1, vis_total_pages: int = 1, total_visits: int = 0,
     proj_page: int = 1, proj_total_pages: int = 1, total_projects: int = 0,
 ) -> str:
+    pending_rows = ""
+    for a in pending_agents:
+        pending_rows += f"""
+        <tr>
+          <td>{_fmt(a.get('name'))}</td>
+          <td>{_fmt(a.get('ecosystem'))}</td>
+          <td>{_fmt(a.get('registered_at'))}</td>
+          <td>
+            <button class="approve-btn" onclick="approveAgent('{html.escape(str(a.get('id', '')))}')">
+              Approve
+            </button>
+          </td>
+        </tr>"""
+
     projects_rows = ""
     for p in projects:
         desc = p.get('description') or ''
         if len(desc) > 100:
             desc_cell = (
-                f'<details><summary class="summary-preview">{desc[:100].rstrip()}…</summary>'
-                f'<span class="summary-full">{desc}</span></details>'
+                f'<details><summary class="summary-preview">{html.escape(desc[:100].rstrip())}…</summary>'
+                f'<span class="summary-full">{html.escape(desc)}</span></details>'
             )
         else:
             desc_cell = _fmt(desc or None)
@@ -112,13 +127,13 @@ def _render(
         if not summary:
             summary_cell = _fmt(None)
         elif len(summary) > 120:
-            short = summary[:120].rstrip() + '…'
+            short = html.escape(summary[:120].rstrip()) + '…'
             summary_cell = (
                 f'<details><summary class="summary-preview">{short}</summary>'
-                f'<span class="summary-full">{summary}</span></details>'
+                f'<span class="summary-full">{html.escape(summary)}</span></details>'
             )
         else:
-            summary_cell = summary
+            summary_cell = html.escape(summary)
 
         visits_rows += f"""
         <tr>
@@ -169,11 +184,30 @@ def _render(
                  font-size: 0.8rem; color: #374151; text-decoration: none; }}
     .page-btn:hover {{ background: #f3f4f6; }}
     .page-info {{ font-size: 0.8rem; color: #6b7280; }}
+    .approve-btn {{ padding: 0.3rem 0.75rem; background: #16a34a; color: #fff;
+                    border: none; border-radius: 5px; font-size: 0.8rem;
+                    font-weight: 600; cursor: pointer; }}
+    .approve-btn:hover {{ background: #15803d; }}
+    .pending-section h2 {{ color: #d97706; border-bottom-color: #fde68a; }}
   </style>
 </head>
 <body>
   <h1>codemanager.rkp</h1>
   <p class="subtitle">System dashboard — auto-refresh on load</p>
+
+  {f'''
+  <section class="pending-section">
+    <h2>Pending Registrations ({len(pending_agents)})</h2>
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Ecosystem</th><th>Registered</th><th>Action</th>
+      </tr></thead>
+      <tbody>
+        {pending_rows}
+      </tbody>
+    </table>
+  </section>
+  ''' if pending_agents else ''}
 
   <section>
     <h2>Projects ({total_projects})</h2>
@@ -213,6 +247,26 @@ def _render(
     </table>
     {_pagination_controls(vis_page, vis_total_pages, "/dashboard", page_param="page")}
   </section>
+  <script>
+    async function approveAgent(id) {{
+      const key = prompt('Enter admin key to approve this agent:');
+      if (!key) return;
+      try {{
+        const r = await fetch('/agents/' + id + '/approve', {{
+          method: 'POST',
+          headers: {{'X-Admin-Key': key}}
+        }});
+        if (r.ok) {{
+          location.reload();
+        }} else {{
+          const err = await r.json().catch(() => ({{detail: 'Unknown error'}}));
+          alert('Failed: ' + (err.detail || r.status));
+        }}
+      }} catch (e) {{
+        alert('Request failed: ' + e.message);
+      }}
+    }}
+  </script>
 </body>
 </html>"""
 
@@ -238,7 +292,10 @@ async def dashboard(
             PROJECTS_PAGE_SIZE, proj_offset,
         )]
         agents = [dict(r) for r in await conn.fetch(
-            "SELECT * FROM codemanager.agents ORDER BY registered_at DESC"
+            "SELECT * FROM codemanager.agents WHERE status = 'active' ORDER BY registered_at DESC"
+        )]
+        pending_agents = [dict(r) for r in await conn.fetch(
+            "SELECT * FROM codemanager.agents WHERE status = 'pending' ORDER BY registered_at ASC"
         )]
         total_visits = await conn.fetchval(
             "SELECT COUNT(*) FROM codemanager.agent_visits"
@@ -261,7 +318,7 @@ async def dashboard(
     total_vis_pages = max(1, math.ceil(total_visits / VISITS_PAGE_SIZE))
     safe_page = min(page, total_vis_pages)
     return _render(
-        projects, agents, visits,
+        projects, agents, visits, pending_agents,
         safe_page, total_vis_pages, total_visits,
         safe_ppage, total_proj_pages, total_projects,
     )

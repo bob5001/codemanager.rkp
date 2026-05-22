@@ -16,6 +16,7 @@ CREATE TABLE codemanager.agents (
     ecosystem     TEXT NOT NULL,           -- e.g. "anthropic", "autogen", "ollama", "cursor"
     api_key_hash  TEXT NOT NULL UNIQUE,    -- SHA-256 of the plaintext key
     capabilities  JSONB DEFAULT '[]'::jsonb,
+    status        TEXT NOT NULL DEFAULT 'active',  -- 'pending' | 'active'
     registered_at TIMESTAMPTZ DEFAULT now(),
     last_seen     TIMESTAMPTZ
 );
@@ -31,7 +32,7 @@ CREATE TABLE codemanager.projects (
     github_url    TEXT,                    -- remote GitHub URL
     description   TEXT,
     summary       TEXT,                    -- latest generated summary
-    embedding     vector(1536),            -- pgvector embedding of summary
+    embedding     vector(768),             -- pgvector embedding of summary (nomic-embed-text)
     status        TEXT NOT NULL DEFAULT 'registered',
     -- status values:
     --   registered | analyzing | partial | analyzed |
@@ -52,7 +53,7 @@ CREATE TABLE codemanager.snapshots (
     timestamp     TIMESTAMPTZ DEFAULT now(),
     file_tree     JSONB,
     key_findings  JSONB,
-    embedding     vector(1536)
+    embedding     vector(768)
 );
 
 -- ────────────────────────────────────────────────────────────
@@ -77,6 +78,9 @@ CREATE TABLE codemanager.agent_visits (
 -- In production they should be rebuilt (REINDEX) once sufficient
 -- rows exist for the IVF lists to be meaningful.
 -- ────────────────────────────────────────────────────────────
+CREATE INDEX idx_cm_agents_status
+    ON codemanager.agents(status);
+
 CREATE INDEX idx_cm_projects_status
     ON codemanager.projects(status);
 

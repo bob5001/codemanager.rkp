@@ -24,7 +24,11 @@ services:
       - .env
     volumes:
       - ./docs:/app/docs
-      - ~/Projects:/Users/robertkoch/Projects:ro
+      # Mount your local projects directory read-only so the analyzer can walk them.
+      # Set PROJECTS_HOST_PATH in .env (or export it) to your projects root.
+      # The container path must match the `path` values stored in the DB.
+      # Default: ~/Projects mounted at the same absolute path it has on the host.
+      - ${PROJECTS_HOST_PATH:-~/Projects}:${PROJECTS_HOST_PATH:-/home/user/Projects}:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

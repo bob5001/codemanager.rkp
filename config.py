@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # ── GitHub ─────────────────────────────────────────────────
     github_token: str = ""
 
+    # ── Admin ──────────────────────────────────────────────────
+    # When set, new agent registrations require approval via POST /agents/{id}/approve.
+    # Leave empty for open registration (single-user / trusted LAN installs).
+    admin_key: str = ""
+
     # ── Service ────────────────────────────────────────────────
     app_port: int = 8000
     app_host: str = "0.0.0.0"

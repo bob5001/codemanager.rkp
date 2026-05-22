@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from analyzers.github import search_github
 from analyzers.summarizer import embed_text
@@ -22,7 +22,7 @@ router = APIRouter()
 
 class SearchRequest(BaseModel):
     query: str
-    limit: int = 10
+    limit: int = Field(default=10, ge=1, le=50)
     status_filter: str | None = None   # narrow local results to a status
     include_github: bool = False        # also search GitHub and merge results
 
@@ -97,10 +97,13 @@ async def search(
         try:
             gh_repos = await search_github(body.query, limit=body.limit)
 
-            # Embed each repo's description+README in parallel, then score
+            _embed_sem = asyncio.Semaphore(5)
+
+            # Embed each repo's description+README in parallel (max 5 concurrent), then score
             async def _score_repo(repo: dict) -> dict:
                 try:
-                    repo_vec = await embed_text(repo["_embed_input"])
+                    async with _embed_sem:
+                        repo_vec = await embed_text(repo["_embed_input"])
                     # Cosine similarity = dot product of unit vectors
                     dot = sum(a * b for a, b in zip(query_vec, repo_vec))
                     norm_q = sum(x * x for x in query_vec) ** 0.5

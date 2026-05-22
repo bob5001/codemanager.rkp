@@ -2,13 +2,10 @@
 Project summarizer — uses local Ollama for text generation.
 
 summarize_project()  → calls Ollama chat API (qwen2.5-coder by default)
-embed_text()         → deterministic stub (unit-length vector seeded by text hash)
-                       TODO Step 6: replace with real embedding model
+embed_text()         → calls Ollama nomic-embed-text (768-dim vectors)
 """
 from __future__ import annotations
 
-import hashlib
-import random
 from pathlib import Path
 
 import httpx
@@ -94,18 +91,10 @@ async def embed_text(text: str) -> list[float]:
     Falls back to a deterministic stub if Ollama is unreachable, so the
     pipeline can still run without embeddings being meaningful.
     """
-    try:
-        async with httpx.AsyncClient(timeout=float(settings.ollama_timeout)) as client:
-            response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/embeddings",
-                json={"model": settings.ollama_embed_model, "prompt": text},
-            )
-            response.raise_for_status()
-            return response.json()["embedding"]
-    except Exception:
-        # Fallback: deterministic unit-length stub (meaningless but safe)
-        seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
-        rng = random.Random(seed)
-        vec = [rng.uniform(-1, 1) for _ in range(768)]
-        mag = sum(x * x for x in vec) ** 0.5
-        return [x / mag for x in vec]
+    async with httpx.AsyncClient(timeout=float(settings.ollama_timeout)) as client:
+        response = await client.post(
+            f"{OLLAMA_BASE_URL}/api/embeddings",
+            json={"model": settings.ollama_embed_model, "prompt": text},
+        )
+        response.raise_for_status()
+        return response.json()["embedding"]

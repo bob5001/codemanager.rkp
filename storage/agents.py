@@ -42,23 +42,41 @@ async def create_agent(
     ecosystem: str,
     api_key_hash: str,
     capabilities: list,
+    status: str = "active",
 ) -> dict:
     """
     Insert a new agent row and return the full row as a dict.
 
     `capabilities` is stored as JSONB; pass a plain Python list.
+    `status` is 'pending' when ADMIN_KEY is configured, 'active' otherwise.
     `registered_at` and `last_seen` default to NOW() in the DB.
     """
     sql = """
         INSERT INTO codemanager.agents
-            (id, name, ecosystem, api_key_hash, capabilities, registered_at, last_seen)
+            (id, name, ecosystem, api_key_hash, capabilities, status, registered_at, last_seen)
         VALUES
-            (gen_random_uuid(), $1, $2, $3, $4::jsonb, NOW(), NOW())
+            (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5, NOW(), NOW())
         RETURNING *
     """
     async with acquire(pool) as conn:
-        row = await conn.fetchrow(sql, name, ecosystem, api_key_hash, json.dumps(capabilities))
+        row = await conn.fetchrow(sql, name, ecosystem, api_key_hash, json.dumps(capabilities), status)
         return _row_to_dict(row)
+
+
+async def approve_agent(
+    pool: asyncpg.Pool,
+    agent_id: str,
+) -> dict | None:
+    """Set an agent's status to 'active'. Returns None if not found."""
+    sql = """
+        UPDATE codemanager.agents
+        SET status = 'active'
+        WHERE id = $1
+        RETURNING *
+    """
+    async with acquire(pool) as conn:
+        row = await conn.fetchrow(sql, agent_id)
+        return _row_to_dict(row) if row is not None else None
 
 
 async def get_agent_by_key_hash(
