@@ -32,6 +32,8 @@ services:
       # Both sides MUST be the same absolute path: the container path has to match
       # the `path` values stored in the DB, or analysis fails and marks projects stuck.
       - ${PROJECTS_HOST_PATH:-${HOME}/Projects}:${PROJECTS_HOST_PATH:-${HOME}/Projects}:ro
+      # Second code root (web projects). Same same-path rule applies.
+      - ${SITES_HOST_PATH:-${HOME}/Sites}:${SITES_HOST_PATH:-${HOME}/Sites}:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

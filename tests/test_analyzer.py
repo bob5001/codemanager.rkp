@@ -139,3 +139,112 @@ async def test_analyze_project_success(pool):
             await conn.execute(
                 "DELETE FROM codemanager.projects WHERE id = $1", project_id
             )
+
+
+# ── Status / status_note preservation ────────────────────────────────────────
+#
+# Analysis is a data refresh, not a lifecycle judgement. It must not downgrade a
+# curated status (in_development, production, …) nor destroy a hand-written note.
+
+def test_strip_stamp_preserves_human_note():
+    from analyzers.runner import _strip_stamp, _with_stamp
+
+    human = "Stuck at OAuth middleware in auth.py:142"
+    stamped = _with_stamp(human, "failed: boom")
+    assert _strip_stamp(stamped) == human
+    # Repeated failures must not accumulate stamps.
+    assert _strip_stamp(_with_stamp(_strip_stamp(stamped), "failed: again")) == human
+
+
+def test_strip_stamp_clears_analyzer_only_notes():
+    from analyzers.runner import _strip_stamp
+
+    assert _strip_stamp("Analysis failed: [Errno 8] nodename nor servname") == ""
+    assert _strip_stamp("") == ""
+    assert _strip_stamp(None) == ""
+
+
+@pytest_asyncio.fixture()
+async def temp_project(pool):
+    """Create a throwaway project row; delete it (and snapshots) afterwards."""
+    created: list[str] = []
+
+    async def _make(status: str, status_note: str):
+        from storage.projects import create_project, update_project
+
+        p = await create_project(
+            pool, name=f"test-status-{uuid.uuid4()}", path=PROJECT_ROOT
+        )
+        pid = str(p["id"])
+        created.append(pid)
+        await update_project(pool, pid, status=status, status_note=status_note)
+        return pid
+
+    yield _make
+
+    async with pool.acquire() as conn:
+        for pid in created:
+            await conn.execute(
+                "DELETE FROM codemanager.snapshots WHERE project_id = $1", pid
+            )
+            await conn.execute("DELETE FROM codemanager.projects WHERE id = $1", pid)
+
+
+@pytest.mark.asyncio
+async def test_analyze_preserves_curated_status_and_note(pool, temp_project):
+    """A successful run must not downgrade in_development or wipe the note."""
+    from analyzers.runner import analyze_project
+    from storage.projects import get_project
+
+    note = "Deterministic system COMPLETE; only agent.py left to wire."
+    project_id = await temp_project("in_development", note)
+
+    with patch(
+        "analyzers.runner.summarize_project", new=AsyncMock(return_value="summary")
+    ), patch("analyzers.runner.embed_text", new=AsyncMock(return_value=None)):
+        await analyze_project(pool, project_id, PROJECT_ROOT)
+
+    updated = await get_project(pool, project_id)
+    assert updated["status"] == "in_development", "analysis downgraded a curated status"
+    assert updated["status_note"] == note, "analysis destroyed a hand-written note"
+    assert updated["summary"] == "summary"
+    assert updated["last_analyzed"] is not None
+
+
+@pytest.mark.asyncio
+async def test_analyze_failure_keeps_curated_status_and_note(pool, temp_project):
+    """A failed run records the error without clobbering status or the note."""
+    from analyzers.runner import analyze_project
+    from storage.projects import get_project
+
+    note = "Live-validated end-to-end; see reports/2026-08-04.md"
+    project_id = await temp_project("production", note)
+
+    with patch(
+        "analyzers.runner.summarize_project",
+        new=AsyncMock(side_effect=RuntimeError("ollama unreachable")),
+    ):
+        await analyze_project(pool, project_id, PROJECT_ROOT)
+
+    updated = await get_project(pool, project_id)
+    assert updated["status"] == "production", "failed analysis downgraded to stuck"
+    assert updated["status_note"].startswith(note), "human note was lost"
+    assert "ollama unreachable" in updated["status_note"], "failure not surfaced"
+
+
+@pytest.mark.asyncio
+async def test_analyze_clears_stale_failure_stamp_on_success(pool, temp_project):
+    """A project stuck by a previous failure returns to analyzed with a clean note."""
+    from analyzers.runner import analyze_project
+    from storage.projects import get_project
+
+    project_id = await temp_project("stuck", "Analysis failed: [Errno 8] nodename")
+
+    with patch(
+        "analyzers.runner.summarize_project", new=AsyncMock(return_value="summary")
+    ), patch("analyzers.runner.embed_text", new=AsyncMock(return_value=None)):
+        await analyze_project(pool, project_id, PROJECT_ROOT)
+
+    updated = await get_project(pool, project_id)
+    assert updated["status"] == "analyzed"
+    assert updated["status_note"] == ""

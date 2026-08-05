@@ -252,7 +252,13 @@ async def test_log_visit(client, auth, pool):
 
         resp = await c.post(
             "/visits",
-            json={"project_id": project_id, "query": "What does this do?"},
+            # `summary` is required by the API — a visit with no findings is
+            # useless to the next agent.
+            json={
+                "project_id": project_id,
+                "query": "What does this do?",
+                "summary": "Empty scaffold; nothing conclusive yet.",
+            },
             headers={"X-Agent-Key": api_key},
         )
         assert resp.status_code == 200, resp.text
@@ -312,8 +318,12 @@ async def test_search_placeholder(client, auth, pool):
         assert body["query"] == "find authentication logic"
         assert "results" in body
         assert "count" in body
-        # No local projects have embeddings yet (migration pending), so local results are empty
-        assert body["local_count"] == 0
+        # local_count reflects however many tracked projects currently carry an
+        # embedding, so assert the contract rather than a fixture-dependent number.
+        assert isinstance(body["local_count"], int)
+        assert body["local_count"] >= 0
+        scores = [r["score"] for r in body["results"] if "score" in r]
+        assert scores == sorted(scores, reverse=True), "results not ranked by score"
     finally:
         await _delete_agent(pool, agent_id)
 

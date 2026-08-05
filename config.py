@@ -30,11 +30,12 @@ class Settings(BaseSettings):
     # Leave empty for open registration (single-user / trusted LAN installs).
     admin_key: str = ""
 
-    # ── Projects root ──────────────────────────────────────────
-    # Consumed by docker-compose to bind-mount the projects dir into the container
+    # ── Code roots ─────────────────────────────────────────────
+    # Consumed by docker-compose to bind-mount the code dirs into the container
     # at the SAME absolute path, so DB `path` values resolve during analysis.
-    # Declared here (unused by the app) so it is a valid key in .env.
+    # Declared here (unused by the app) so they are valid keys in .env.
     projects_host_path: str = ""
+    sites_host_path: str = ""
 
     # ── Service ────────────────────────────────────────────────
     app_port: int = 8000
