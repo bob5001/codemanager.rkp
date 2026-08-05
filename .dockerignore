@@ -1,0 +1,32 @@
+# Secrets — never bake these into the image (Dockerfile uses `COPY . .`)
+.env
+.env.local
+*.key
+secrets/
+
+# VCS
+.git
+.gitignore
+
+# Local virtualenv (image installs from requirements.txt)
+.venv
+venv
+
+# Python cruft
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local runtime output
+logs/
+*.log
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+
+# Agent + docs scaffolding not needed at runtime
+.claude

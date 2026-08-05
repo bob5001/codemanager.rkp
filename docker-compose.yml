@@ -8,7 +8,10 @@ services:
       POSTGRES_USER: rkp_user
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5433:5432"
+      # Bound to loopback only: the app containers reach Postgres over the compose
+      # network as `db:5432`, and the sole consumer of this published port is the
+      # host-side stdio MCP server (see .env.local). Nothing off-box needs it.
+      - "127.0.0.1:5433:5432"
     volumes:
       - rkp_pgdata:/var/lib/postgresql/data
 
@@ -26,9 +29,9 @@ services:
       - ./docs:/app/docs
       # Mount your local projects directory read-only so the analyzer can walk them.
       # Set PROJECTS_HOST_PATH in .env (or export it) to your projects root.
-      # The container path must match the `path` values stored in the DB.
-      # Default: ~/Projects mounted at the same absolute path it has on the host.
-      - ${PROJECTS_HOST_PATH:-~/Projects}:${PROJECTS_HOST_PATH:-/home/user/Projects}:ro
+      # Both sides MUST be the same absolute path: the container path has to match
+      # the `path` values stored in the DB, or analysis fails and marks projects stuck.
+      - ${PROJECTS_HOST_PATH:-${HOME}/Projects}:${PROJECTS_HOST_PATH:-${HOME}/Projects}:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
