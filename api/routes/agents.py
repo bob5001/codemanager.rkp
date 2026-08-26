@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.deps import get_current_agent
+from api.deps import get_current_agent, is_local_request
 from config import settings
 from storage.agents import approve_agent, create_agent
 from storage.database import get_pool
@@ -82,10 +82,15 @@ async def register_agent(body: AgentRegisterRequest, request: Request) -> AgentR
     Generates a cryptographically random API key, hashes it for storage,
     and returns the plaintext key once.  The key cannot be recovered after
     this response — the caller must store it securely.
+
+    When ADMIN_KEY is set, registrations from this machine (loopback, or the
+    Docker-NAT gateway address host-originated localhost traffic arrives as
+    — see api.deps.is_local_request) go active immediately; only LAN/remote
+    callers land in 'pending' and need an explicit /approve.
     """
     plaintext_key = secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(plaintext_key.encode()).hexdigest()
-    status = "pending" if settings.admin_key else "active"
+    status = "active" if (not settings.admin_key or is_local_request(request)) else "pending"
 
     pool = get_pool(request)
     agent = await create_agent(

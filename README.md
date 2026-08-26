@@ -90,7 +90,8 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 **With `ADMIN_KEY` set:**
-- New agents register with `status: pending` and receive their API key immediately, but all API calls return `403 Registration pending admin approval` until approved.
+- Registrations from the machine running the service go **active immediately** — the gate is for LAN/remote callers, not for you. "Local" means loopback (127.0.0.1) or the Docker-NAT gateway address that host-originated `localhost` traffic arrives as (see `api.deps.is_local_request`); a genuine LAN or tunnel client's source IP matches neither.
+- Everyone else's registrations land as `status: pending` and receive their API key immediately, but all API calls return `403 Registration pending admin approval` until approved.
 - Open `http://localhost:8007/dashboard` — a **Pending Registrations** section appears at the top with an **Approve** button for each waiting agent. Click it, enter the admin key, done.
 - Or approve via CLI:
   ```bash
@@ -145,11 +146,11 @@ After `bash register_mcp.sh`, these tools are available inside any Claude Code s
 
 | Tool | What it does |
 |------|-------------|
-| `list_all_projects` | List tracked codebases, optionally filtered by status |
+| `list_all_projects` | List tracked codebases (trimmed view; paged, status filter) |
 | `get_project_detail` | Full project info + latest file-tree snapshot |
 | `get_project_by_path_tool` | Look up a project by filesystem path |
 | `register_project` | Add and analyse a new codebase |
-| `search_projects` | Semantic similarity search (local + optional GitHub) |
+| `search_projects` | Semantic similarity search, trimmed view (local + optional GitHub) |
 | `get_visit_history` | Past agent findings for a project |
 | `record_visit` | Share your findings for future agents |
 | `update_project_status` | Set lifecycle status + optional note |

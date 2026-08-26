@@ -26,6 +26,8 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 
+from api.deps import is_local_request
+from config import settings
 from main import app
 
 
@@ -116,3 +118,76 @@ async def test_health_no_auth(client: httpx.AsyncClient):
     response = await client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+# ── Local-request gating (is_local_request / registration bypass) ─────────────
+#
+# ASGITransport defaults its fake client to ("127.0.0.1", 123), which is why
+# `client` above (and every test using it) registers as an active agent even
+# when ADMIN_KEY is set in this repo's .env — it looks like a local caller.
+# These tests target that behavior directly.
+
+def _fake_request(client_host: str | None):
+    """Minimal Starlette Request exposing just `.client` for is_local_request."""
+    from starlette.requests import Request as StarletteRequest
+
+    scope = {"type": "http", "client": (client_host, 12345) if client_host else None}
+    return StarletteRequest(scope)
+
+
+def test_is_local_request_loopback():
+    assert is_local_request(_fake_request("127.0.0.1")) is True
+    assert is_local_request(_fake_request("::1")) is True
+
+
+def test_is_local_request_remote():
+    assert is_local_request(_fake_request("203.0.113.5")) is False
+
+
+def test_is_local_request_no_client():
+    assert is_local_request(_fake_request(None)) is False
+
+
+def test_is_local_request_docker_gateway(monkeypatch):
+    """The Docker-NAT gateway address (see api.deps._read_default_gateway) counts
+    as local too — it's what host-originated loopback traffic arrives as."""
+    monkeypatch.setattr("api.deps._DOCKER_GATEWAY", "192.168.147.1")
+    assert is_local_request(_fake_request("192.168.147.1")) is True
+    assert is_local_request(_fake_request("192.168.1.50")) is False
+
+
+@pytest.mark.skipif(not settings.admin_key, reason="ADMIN_KEY not set — registration is open regardless of origin")
+@pytest.mark.asyncio
+async def test_register_agent_remote_lands_pending():
+    """A registration whose source IP isn't local lands in 'pending' and its
+    key is rejected with 403 until an admin approves it — the gate the local
+    bypass is meant to preserve for genuine LAN/remote callers."""
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=manager.app, client=("203.0.113.5", 12345)),
+            base_url="http://test",
+        ) as c:
+            reg = await c.post(
+                "/agents",
+                json={"name": "remote-test-agent", "ecosystem": "python"},
+            )
+            assert reg.status_code == 200, reg.text
+            body = reg.json()
+            assert body["status"] == "pending"
+
+            me = await c.get("/agents/me", headers={"X-Agent-Key": body["api_key"]})
+            assert me.status_code == 403
+            assert "pending admin approval" in me.json()["detail"]
+
+
+@pytest.mark.skipif(not settings.admin_key, reason="ADMIN_KEY not set — registration is open regardless of origin")
+@pytest.mark.asyncio
+async def test_register_agent_local_lands_active(client: httpx.AsyncClient):
+    """A registration from this machine (ASGITransport's default fake client
+    is 127.0.0.1) is active immediately, even with ADMIN_KEY set."""
+    reg = await client.post(
+        "/agents",
+        json={"name": "local-bypass-test-agent", "ecosystem": "python"},
+    )
+    assert reg.status_code == 200, reg.text
+    assert reg.json()["status"] == "active"
