@@ -5,6 +5,10 @@ SKIP_DIRS = {
     ".git", ".venv", "venv", "__pycache__", "node_modules",
     ".pytest_cache", "dist", "build", ".mypy_cache", ".ruff_cache",
     "htmlcov", ".tox", "reference",
+    # PHP/Composer dependency trees — same role as node_modules. WordPress
+    # plugins bundling vendored libraries (ACF, Toolset, Wordfence, etc.) can
+    # otherwise add tens of thousands of small files to the snapshot.
+    "vendor",
 }
 SKIP_EXTENSIONS = {
     ".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll", ".egg-info",

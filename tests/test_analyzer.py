@@ -60,6 +60,19 @@ def test_walk_project_skips_venv():
         assert first not in (".venv", "venv"), f"venv leaked into file_tree: {rel_path}"
 
 
+def test_walk_project_skips_vendor(tmp_path):
+    (tmp_path / "vendor" / "somepkg").mkdir(parents=True)
+    (tmp_path / "vendor" / "somepkg" / "lib.php").write_text("<?php // vendored\n")
+    (tmp_path / "app.php").write_text("<?php // real code\n")
+
+    result = walk_project(str(tmp_path))
+
+    assert "app.php" in result["file_tree"]
+    for rel_path in result["file_tree"]:
+        first = rel_path.split(os.sep)[0]
+        assert first != "vendor", f"vendor/ leaked into file_tree: {rel_path}"
+
+
 def test_walk_project_key_files():
     result = walk_project(PROJECT_ROOT)
     assert any("requirements.txt" in kf for kf in result["key_files"])
