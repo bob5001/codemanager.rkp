@@ -1,245 +1,214 @@
 # codemanager.rkp – Start Here
 
-You are entering the codemanager.rkp system.
+You have reached the codemanager.rkp service: shared, persistent knowledge about codebases,
+kept across every agent session and every agent platform. It records what projects exist,
+what has been tried in them, and what each agent before you concluded.
 
-Your immediate role is **Project Intelligence Agent**.
+The core premise: **before you build, search. Before you leave, log.**
 
-This system maintains persistent, queryable knowledge about codebases across all sessions
-and agent ecosystems. It remembers what exists, what has been tried, and what every agent
-before you concluded.
-
-The core premise: before you build, search. Before you leave, log.
+Run the protocol below automatically at the start of a session. You do not need to ask permission.
 
 ---
 
-## Onboarding Protocol
+## Endpoints
 
-Execute all steps below **before beginning any work**. Do not ask for permission — just do it.
+| What | Where |
+|---|---|
+| MCP (streamable HTTP) | `http://192.168.1.189:8008/mcp` |
+| REST API | `http://localhost:8007` → `http://cm.lan:8007` → `http://192.168.1.189:8007` (try in order) |
+| This page | `GET /` on the REST API |
+| Interactive API docs | `GET /docs` (authoritative if anything here disagrees) |
+| Human dashboard | `GET /dashboard` |
+
+The MCP endpoint is `/mcp`. The old `/sse` endpoint has been retired and returns 404. Configure
+your client for **streamable HTTP**, not SSE.
+
+On the machine running the service, `localhost` works. From any other machine on the LAN, use the
+`.189` address or `cm.lan`. `cm.lan` is a proxy that forwards to `.189`.
 
 ---
 
-### Preferred: MCP tools
+## Choose your path
 
-**MCP endpoint (streamable-http):** `http://192.168.1.189:8008/mcp`
-
-If your platform supports MCP and the `codemanager` tools are available (look for `mcp__codemanager__*` or equivalent), **use them** — no auth, no key management required. Skip Step 1 and proceed directly to Step 2.
-
-If MCP is unavailable or erroring, fall back to the REST API below.
+- **MCP tools available** (look for `codemanager` tools, e.g. `mcp__codemanager__*`): use them.
+  You need no auth and no key. Follow **Protocol A**.
+- **No MCP, or MCP erroring:** use the REST API. Follow **Protocol B**.
+- **Neither reachable:** codemanager is down. Do your task without it and say so in your final output.
 
 ---
 
-### Step 0 — Check for codemanager.md (fastest path, both MCP and REST)
+## Protocol A — MCP
 
-Before any search or list call, look for `codemanager.md` in the root of your current working directory.
+**Tools:** `list_all_projects` · `search_projects` · `get_project_by_path_tool` · `get_project_detail` ·
+`get_visit_history` · `register_project` · `record_visit` · `update_project_status`
 
-**File found:**
-- Read the `codemanager_id` from the YAML frontmatter block at the top of the file:
-  ```
-  ---
-  codemanager_id: <uuid>
-  name: <project name>
-  ---
-  ```
-- Use that UUID to fetch the project directly:
-  - MCP: `get_project_detail(codemanager_id)`, then `get_visit_history(codemanager_id)`
-  - REST: `GET /projects/<codemanager_id>` and `GET /visits/<codemanager_id>`
-- Log your visit against that ID when done
-- **Skip Steps 2–4** (search and list are unnecessary — you have a direct identity)
+### A0. Identify the project
 
-**File not found:**
-- Check whether the project is already registered before creating a new entry:
-  - MCP: `get_project_by_path_tool(path)` with your working directory
-  - REST: `GET /projects/by-path?path=<your working directory>`
-- If a record is found: write `codemanager.md` (recovery flow), proceed with work
-- If no record is found: confirm with the user that this project is unregistered, then register it and write `codemanager.md` to the project root
+Look for `codemanager.md` in the root of your working directory.
 
-**codemanager.md format** (write exactly this structure):
+- **Found:** read `codemanager_id` from its frontmatter and call `get_visit_history(codemanager_id)`.
+  That usually gives you all the orientation you need. Go to A2.
+- **Not found:** call `get_project_by_path_tool(<working directory>)`.
+  - **Record exists:** write `codemanager.md` (format below) and go to A2.
+  - **No record:** confirm with the user that the project should be registered, call
+    `register_project`, and write `codemanager.md` with the returned id.
+
+### A1. Search before acting (when the task spans or may duplicate other projects)
+
+Call `search_projects("<your task in plain language>")`. If nothing relevant turns up, note that
+the territory is uncharted; you will say so in your visit log.
+
+### A2. Work
+
+Do the task.
+
+### A3. Log your visit
+
+Call `record_visit(project_id, summary, query, usefulness)`. See **Visit logs** below.
+
+### Notes on response size
+
+- `list_all_projects` and `search_projects` return a **trimmed view**: an id, a name, a path, a status
+  and a short description. `summary` and `status_note` are left out. This is deliberate. Pick the
+  project you want, then fetch its full record. Use `limit`/`offset` to page; `verbose=true` returns
+  every field but falls back to the trimmed view when the response would be too large.
+- `get_project_detail` returns the full record plus the latest file-tree snapshot. Call it only when
+  you need that. On dependency-heavy codebases the file list is left out once it passes a size
+  limit; the summary fields remain.
+
+---
+
+## Protocol B — REST API
+
+### B0. Authenticate
+
+Send your API key on every request as the `X-Agent-Key` header. Keep it wherever your platform
+stores credentials, and reuse it across sessions.
+
+No key yet? Register:
+```
+POST /agents
+Body: {"name": "<your-agent-name>", "ecosystem": "<your-platform>"}
+```
+Save `api_key` from the response.
+
+**Approval:** registrations from the machine running the service are active immediately.
+Registrations from any other machine are **pending**: you receive a key, but every call returns
+`403 Registration pending admin approval` until an admin approves you on `/dashboard`. If you see
+that 403, tell the user you need approval. Do not register again.
+
+### B1. Identify the project
+
+Check for `codemanager.md` (see A0).
+- **Found:** `GET /visits/<codemanager_id>` for history; `GET /projects/<codemanager_id>` only if
+  you need the full record and snapshot.
+- **Not found:** `GET /projects/by-path?path=<working directory>`. If there's no record, confirm
+  with the user, `POST /projects`, and write `codemanager.md`.
+
+### B2. Search before acting
+
+```
+POST /search
+Body: {"query": "<your task in plain language>"}
+```
+
+### B3. Work, then log
+
+```
+POST /visits
+Body: {
+  "project_id": "<project you worked on>",
+  "query": "<what you were trying to do>",
+  "summary": "<what you concluded>",
+  "usefulness": 3
+}
+```
+
+To correct a project's status or note, use `PATCH /projects/{id}`.
+
+---
+
+## `codemanager.md` format
+
+Write exactly this to the project root:
 ```
 ---
-codemanager_id: <uuid returned by register>
+codemanager_id: <uuid>
 name: <project name>
 ---
 This file anchors the project to its codemanager record.
-Agents: read `codemanager_id` and call `get_project_detail` — no search needed.
+Agents: read `codemanager_id` and call `get_visit_history` — no search needed.
 Do not delete or move this file.
 ```
 
 ---
 
-### Step 1 — Authenticate (REST fallback only)
+## Visit logs
 
-Check if you have a stored API key from a previous session (storage location is agent-dependent).
-
-- **Key exists:** use it as the `X-Agent-Key` header on all requests. Skip to Step 2.
-- **No key:** register and save:
-  ```
-  POST <codemanager-url>/agents
-  Body: {"name": "<your-agent-name>", "ecosystem": "<your-platform>"}
-  ```
-  Save the `api_key` from the response and reuse it across sessions.
-
-**CodeManager REST URL (try in order):** `http://localhost:8007` → `http://cm.lan:8007` → `http://192.168.1.189:8007`
-
-Note: `cm.lan` routes through a network proxy; CodeManager itself runs on the `.189` host at port `8007`. On the primary machine `localhost` works directly. From other machines on the network, fall back to `cm.lan:8007`.
-
-**If this step fails:** codemanager is unreachable. Note this, skip remaining steps, and proceed with your task.
-
----
-
-### Step 2 — Read orientation
-
-```
-GET http://cm.lan:8007/
-```
-
-Read and internalize the returned doc. Follow its operating instructions.
-
----
-
-### Step 3 — Check health
-
-```
-GET http://cm.lan:8007/health
-```
-
-If status is not `ok`, treat codemanager as degraded. Complete your task but note this in your visit log.
-
----
-
-### Step 4 — Search before acting
-
-```
-POST http://cm.lan:8007/search
-X-Agent-Key: <your key>
-Body: {"query": "<your current task in plain language>"}
-```
-
-- **Results found:** read them and check visit history before proceeding. Do not duplicate work that is already documented.
-- **No results:** this is uncharted territory. Proceed, but log this explicitly in your visit summary — include the exact query that returned nothing.
-- **Request fails:** proceed with your task. Note the failure in your visit log.
-
----
-
-### Step 5 — Work
-
-Do the task.
-
----
-
-### Step 6 — Log your visit (always, even if earlier steps failed)
-
-```
-POST http://cm.lan:8007/visits
-X-Agent-Key: <your key>
-Body: {
-  "project_id": "<the project id you worked on>",
-  "query": "<what you were trying to do>",
-  "summary": "<what you concluded — not what you did, what you found>",
-  "usefulness": 3
-}
-```
-
-`usefulness` scale: 0=harmful, 1=irrelevant, 2=partial, 3=useful, 4=definitive
-
-**Critical rules:**
-- **Only log a visit for the project you actually worked on.** Do NOT log visits for every project returned by search — only the one(s) you investigated.
-- **`summary` is required and must not be empty.** The API will reject null or blank summaries.
-- Write your summary for the next agent who has zero context. If it wouldn't help them make a better decision, rewrite it.
-- If your search returned nothing, say so explicitly in the summary — it tells the next agent this territory is uncharted.
-
-If codemanager was unreachable the entire session, skip this step.
-
----
-
-## Operating Modes
-
-**Discovery Mode**
-Starting a new task in an unfamiliar codebase or domain.
-- Run `POST /search` with your task as a natural language query
-- Read the top results and their visit histories
-- Do not duplicate work that is already documented
-
-**Registration Mode**
-Encountered a project that isn't tracked yet.
-- First check: `GET /projects/by-path?path=<cwd>` (or MCP: `get_project_by_path_tool`) — avoid creating a duplicate
-- Confirm with user before registering
-- `POST /projects` with path and description
-- Write `codemanager.md` to the project root with the returned UUID
-- Wait for analysis to complete (status: `analyzing` → `analyzed`)
-
-**Continuation Mode**
-Picking up work a previous agent started.
-- `GET /visits/{project_id}` — read what was concluded, not just what was done
-- Check `useful: false` entries — they are as valuable as successes
-- Note any unresolved findings left by prior agents
-
-**Handoff Mode**
-Passing work to another agent or ending a session.
-- Log a thorough visit entry — your summary is their starting point
-- Set `useful` honestly
-- Flag anything unresolved explicitly in your summary field
-
----
-
-## Output contract
-
-Every visit log (`POST /visits`) must include:
+Every visit log is a message to the next agent, who arrives with zero context.
 
 | Field | Requirement |
 |---|---|
-| `project_id` | The project you worked with |
+| `project_id` | The project you actually worked on |
 | `query` | What you were trying to accomplish |
-| `summary` | **Required, non-empty.** What you concluded — not what you did, what you *found* |
-| `usefulness` | Whether this project was relevant to your task |
+| `summary` | **Required, non-empty.** What you *found or concluded*, not a list of actions |
+| `usefulness` | 0 = harmful, 1 = irrelevant, 2 = partial, 3 = useful, 4 = definitive |
 
-If your summary would not help the next agent make a better decision, rewrite it.
+Rules:
+- Log only the project(s) you directly investigated or changed, not every search hit.
+- If your search returned nothing, say so and include the query.
+- Record dead ends and wrong turns. A "this didn't work, here's why" entry is as valuable as a success.
+- If a project's recorded state is stale or wrong, say so and fix it (`update_project_status` / `PATCH`).
+- If a summary wouldn't help the next agent make a better decision, rewrite it.
 
----
-
-## Operating Stance
-
-- Read before writing
-- Log conclusions, not just actions
-- Treat a `useful: false` entry as a valid and necessary contribution
-- If the project state is stale or wrong, say so in the visit log and update via `PATCH /projects/{id}`
-- Ambiguity in prior visit logs is a signal, not noise — note it
-
-This system does NOT:
-- Infer conclusions you did not reach
-- Preserve incomplete or vague visit entries as useful
-- Treat silence as confirmation
+**Always log**, even when the task failed, unless codemanager was unreachable the whole session.
 
 ---
 
-## Authentication
+## Project statuses
 
-Pass your API key on every request as the `X-Agent-Key` header.
+Analysis pipeline (set by the system): `registered` → `analyzing` → `analyzed` (or `partial` / `stuck`)
 
-No key yet? Register first:
+Lifecycle (set by people and agents, never overwritten by re-analysis):
+`in_development` · `alpha` · `testing` · `production` · `deprecated` · `archived`
+
+---
+
+## Client setup
+
+Any MCP client that supports streamable HTTP can connect to `http://192.168.1.189:8008/mcp`
+directly. No headers or auth are needed. Examples:
+
+**Hermes Agent** (`~/.hermes/config.yaml`, then reload MCP):
+```yaml
+mcp_servers:
+  codemanager:
+    url: http://192.168.1.189:8008/mcp
 ```
-POST /agents   { "name": "your-agent-name", "ecosystem": "your-platform" }
+
+**Clients that insist on HTTPS** (e.g. Claude Desktop's "Add Custom Connector" UI): the service has no
+TLS, so add it as a local stdio server through the `mcp-remote` bridge instead (requires Node/`npx`):
+```json
+{
+  "mcpServers": {
+    "codemanager": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://192.168.1.189:8008/mcp", "--allow-http"]
+    }
+  }
+}
 ```
-This is the only unauthenticated endpoint (besides `/health`).
+For Claude Desktop this goes in `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Quit and relaunch afterwards.
 
----
-
-## Supporting references
-
-| Resource | Where |
-|---|---|
-| Interactive API docs | `GET /docs` — always current, always authoritative |
-| Project detail + snapshot | `GET /projects/{id}` |
-| Visit history | `GET /visits/{project_id}` |
-| Project lifecycle states | `registered → analyzing → analyzed → in_development → production` |
-
-If anything in this file conflicts with `/docs`, defer to `/docs`.
+**Troubleshooting:** a 404 means you are pointing at `/sse`. A connection refusal or EHOSTDOWN
+means a network problem, so check that the host is reachable at `.189` before changing any client
+settings.
 
 ---
 
 ## Keeping this file current
 
-**If you add agent-platform-specific onboarding instructions elsewhere** (e.g. in a platform config file, agent system prompt, or tool-specific config), mirror those instructions here in platform-agnostic form. This file is the canonical onboarding reference for all agents regardless of platform or ecosystem.
-
----
-
-Begin by checking `/health`.
+This page is the canonical, platform-neutral onboarding reference for every agent. If you add or
+change onboarding instructions anywhere else (a platform config, a system prompt, a client-specific
+file), mirror them here in platform-agnostic form.
