@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": [str(_HERE / ".env"), str(_HERE / ".env.local")],
         "env_file_encoding": "utf-8",
+        # .env is shared with docker compose and holds unrelated keys too;
+        # don't refuse to start over them.
+        "extra": "ignore",
     }
 
 

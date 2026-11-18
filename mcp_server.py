@@ -1,4 +1,4 @@
-"""
+r"""
 Standalone MCP server for codemanager.rkp.
 
 Exposes project-intelligence tools directly to Claude Code and other MCP
