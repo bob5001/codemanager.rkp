@@ -405,8 +405,10 @@ Results are trimmed exactly as `list_all_projects` trims them, and for the same 
 **`get_visit_history(project_id, limit?)`**
 Returns up to `limit` visits, newest first. Filter mentally by `usefulness >= 3` for reliable findings.
 
-**`record_visit(project_id, query?, summary?, usefulness?, confidence?, model_used?)`**
-Logs a visit under the `mcp_local` system agent. All fields except `project_id` are optional, but a good `summary` is the most valuable thing you can leave behind.
+**`record_visit(project_id, summary, query?, usefulness?, confidence?, model_used?)`**
+Logs a visit. `summary` is required and must not be empty; it's the most valuable thing you can leave behind.
+
+Attribution: if the MCP client connects over HTTP with an `X-Agent-Key` header, the visit is credited to that registered agent; otherwise it goes to the shared `mcp_local` system agent. The response includes `attributed_to`. A header with an unknown key, or the key of an agent still pending approval, returns an error rather than silently falling back to `mcp_local`. Stdio clients can't send headers, so they always log as `mcp_local`. To set one up, register via `POST /agents` and put the returned `api_key` in the client's MCP headers config.
 
 **`update_project_status(project_id, status, status_note?)`**
 Updates lifecycle status. Use `status_note` to pin a specific blocker or milestone: `"stuck at line 89 in auth/oauth.py — token refresh 401"`.

@@ -179,11 +179,20 @@ Lifecycle (set by people and agents, never overwritten by re-analysis):
 Any MCP client that supports streamable HTTP can connect to `http://192.168.1.189:8008/mcp`
 directly. No headers or auth are needed. Examples:
 
+**Getting credit for your visits:** by default, every MCP client's visits are attributed to one
+shared `mcp_local` agent. To be credited by name, register an agent over REST (`POST /agents`,
+see Protocol B) and have your MCP client send its key as an `X-Agent-Key` header. `record_visit`
+returns `attributed_to` so you can confirm. A key that is unknown or still pending approval makes
+`record_visit` return an error; it won't fall back silently. Stdio connections can't send headers
+and always use `mcp_local`.
+
 **Hermes Agent** (`~/.hermes/config.yaml`, then reload MCP):
 ```yaml
 mcp_servers:
   codemanager:
     url: http://192.168.1.189:8008/mcp
+    headers:
+      X-Agent-Key: <your agent's api_key>
 ```
 
 **Clients that insist on HTTPS** (e.g. Claude Desktop's "Add Custom Connector" UI): the service has no

@@ -8,6 +8,7 @@ Run with:  pytest tests/test_mcp_server.py -v
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -342,3 +343,80 @@ async def test_mcp_agent_created_once(pool):
     id1 = await mcp_server._ensure_mcp_agent(pool)
     id2 = await mcp_server._ensure_mcp_agent(pool)
     assert id1 == id2
+
+
+# ── Per-client attribution via X-Agent-Key ────────────────────────────────────
+
+from types import SimpleNamespace  # noqa: E402
+
+from storage.agents import create_agent  # noqa: E402
+
+
+def _ctx_with_headers(headers: dict | None):
+    """Stand-in for FastMCP's Context: only .request_context.request.headers is read."""
+    request = SimpleNamespace(headers=headers) if headers is not None else None
+    return SimpleNamespace(request_context=SimpleNamespace(request=request))
+
+
+async def _make_agent(pool, status: str = "active") -> tuple[str, str, str]:
+    """Create a test agent; return (agent_id, name, plaintext key)."""
+    key = f"mcp-attr-test-key-{uuid.uuid4()}"
+    name = f"mcp-attr-test-{uuid.uuid4().hex[:8]}"
+    agent = await create_agent(
+        pool, name=name, ecosystem="pytest",
+        api_key_hash=hashlib.sha256(key.encode()).hexdigest(),
+        capabilities=[], status=status,
+    )
+    return str(agent["id"]), name, key
+
+
+async def _visit_with_ctx(ctx):
+    reg = await mcp_server.register_project(name=f"mcp-attr-test-{uuid.uuid4()}", analyze=False)
+    project_id = json.loads(reg)["id"]
+    result = json.loads(await mcp_server.record_visit(
+        project_id=project_id, summary="attribution test", ctx=ctx,
+    ))
+    return project_id, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ctx", [None, _ctx_with_headers(None), _ctx_with_headers({})])
+async def test_record_visit_without_key_uses_mcp_local(pool, ctx):
+    project_id, visit = await _visit_with_ctx(ctx)
+    try:
+        assert visit["agent_id"] == mcp_server._mcp_agent_id
+        assert visit["attributed_to"] == mcp_server.MCP_AGENT_NAME
+    finally:
+        await _delete_project(pool, project_id)
+
+
+@pytest.mark.asyncio
+async def test_record_visit_with_key_credits_that_agent(pool):
+    agent_id, name, key = await _make_agent(pool)
+    project_id, visit = await _visit_with_ctx(_ctx_with_headers({"x-agent-key": key}))
+    try:
+        assert visit["agent_id"] == agent_id
+        assert visit["attributed_to"] == name
+    finally:
+        await _delete_project(pool, project_id)
+
+
+@pytest.mark.asyncio
+async def test_record_visit_unknown_key_is_rejected(pool):
+    project_id, visit = await _visit_with_ctx(_ctx_with_headers({"x-agent-key": "no-such-key"}))
+    try:
+        assert "error" in visit
+        assert "does not match any registered agent" in visit["error"]
+    finally:
+        await _delete_project(pool, project_id)
+
+
+@pytest.mark.asyncio
+async def test_record_visit_pending_agent_is_rejected(pool):
+    _, _, key = await _make_agent(pool, status="pending")
+    project_id, visit = await _visit_with_ctx(_ctx_with_headers({"x-agent-key": key}))
+    try:
+        assert "error" in visit
+        assert "pending admin approval" in visit["error"]
+    finally:
+        await _delete_project(pool, project_id)

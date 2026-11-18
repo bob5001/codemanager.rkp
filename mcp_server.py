@@ -47,7 +47,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 # Ensure project root is importable when invoked directly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -61,6 +61,7 @@ from storage.projects import (  # noqa: E402
     list_projects,
     update_project,
 )
+from storage.agents import get_agent_by_key_hash  # noqa: E402
 from storage.visits import get_visits, log_visit  # noqa: E402
 
 MCP_AGENT_NAME = "mcp_local"
@@ -139,6 +140,59 @@ def _slim_project(row: dict) -> dict:
             slim["description"], MAX_LIST_DESCRIPTION_CHARS
         )
     return slim
+
+
+class AgentKeyError(Exception):
+    """The caller sent an X-Agent-Key that can't be used for attribution."""
+
+
+def _agent_key_from_ctx(ctx: Context | None) -> str | None:
+    """Return the X-Agent-Key header of the current HTTP request, if any.
+
+    Only the HTTP transports carry a request; stdio has none, so stdio callers
+    (and anyone connecting without the header) get None.
+    """
+    if ctx is None:
+        return None
+    try:
+        request = ctx.request_context.request
+    except (AttributeError, ValueError, LookupError):
+        return None
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    key = headers.get("x-agent-key")
+    return key.strip() if key and key.strip() else None
+
+
+async def _resolve_agent(pool: asyncpg.Pool, ctx: Context | None) -> tuple[str, str]:
+    """Pick the agent a write is attributed to: (agent_id, agent_name).
+
+    A client that connects with an `X-Agent-Key` header (e.g. Hermes, via
+    `headers:` in its MCP config) is credited as that registered agent.
+    Without the header, writes fall back to the shared `mcp_local` agent.
+
+    A header that is present but unusable (unknown key, or an agent still
+    pending approval) raises AgentKeyError rather than silently falling back:
+    the client clearly meant to identify itself, so a misattributed visit
+    would be worse than a clear error. This mirrors the REST API's 401/403.
+    """
+    key = _agent_key_from_ctx(ctx)
+    if key is None:
+        return _mcp_agent_id, MCP_AGENT_NAME  # type: ignore[return-value]
+    agent = await get_agent_by_key_hash(pool, hashlib.sha256(key.encode()).hexdigest())
+    if agent is None:
+        raise AgentKeyError(
+            "X-Agent-Key header does not match any registered agent. Fix or remove "
+            "the header in your MCP client config (without it, writes are attributed "
+            f"to the shared '{MCP_AGENT_NAME}' agent)."
+        )
+    if agent.get("status") == "pending":
+        raise AgentKeyError(
+            f"Agent '{agent['name']}' is pending admin approval; approve it on "
+            "/dashboard before using its key."
+        )
+    return str(agent["id"]), agent["name"]
 
 
 async def _ensure_mcp_agent(pool: asyncpg.Pool) -> str:
@@ -534,12 +588,17 @@ async def record_visit(
     # 0=harmful 1=irrelevant 2=partial 3=useful 4=definitive (0–4)
     confidence: float | None = None,
     model_used: str | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """
     Record your visit to a project with findings for future agents.
 
     Call this after finishing work on a project — even partial findings are
     valuable for the next agent that opens this codebase.
+
+    The visit is credited to the agent whose key your MCP client sends in an
+    `X-Agent-Key` header, or to the shared `mcp_local` agent if it sends none.
+    The response's `attributed_to` field says which.
 
     Args:
         project_id: UUID of the project you visited.
@@ -560,17 +619,23 @@ async def record_visit(
                      "Write what you concluded — not what you did, but what you found. "
                      "Only log a visit for a project you actually worked on."
         })
+    try:
+        agent_id, agent_name = await _resolve_agent(pool, ctx)
+    except AgentKeyError as exc:
+        return json.dumps({"error": str(exc)})
     visit = await log_visit(
         pool,
         project_id=project_id,
-        agent_id=_mcp_agent_id,
+        agent_id=agent_id,
         query=query,
         summary=summary,
         usefulness=usefulness,
         confidence=confidence,
         model_used=model_used,
     )
-    return json.dumps(_serialize(visit), indent=2)
+    result = _serialize(visit)
+    result["attributed_to"] = agent_name
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
