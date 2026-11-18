@@ -219,14 +219,34 @@ async def _ensure_mcp_agent(pool: asyncpg.Pool) -> str:
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
+# The low-level MCP server enters this lifespan once per *session*, not once
+# per process: under stdio there is a single session, but under streamable-HTTP
+# and SSE every client connection gets its own. The pool is a process-wide
+# global, so it is shared and reference-counted: the first session creates it,
+# the last one to end closes it. (Previously each session created its own pool
+# into the global and closed it on exit, so any client disconnecting — even a
+# `hermes mcp test` probe — set _pool to None under every other live session,
+# whose next tool call then failed with "DB pool not initialised".)
+_live_sessions = 0
+_pool_lock = asyncio.Lock()
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
-    global _pool, _mcp_agent_id
-    _pool = await asyncpg.create_pool(dsn=settings.get_dsn(), min_size=1, max_size=5)
-    _mcp_agent_id = await _ensure_mcp_agent(_pool)
-    yield
-    await _pool.close()
-    _pool = None
+    global _pool, _mcp_agent_id, _live_sessions
+    async with _pool_lock:
+        if _pool is None:
+            _pool = await asyncpg.create_pool(dsn=settings.get_dsn(), min_size=1, max_size=5)
+            _mcp_agent_id = await _ensure_mcp_agent(_pool)
+        _live_sessions += 1
+    try:
+        yield
+    finally:
+        async with _pool_lock:
+            _live_sessions -= 1
+            if _live_sessions == 0 and _pool is not None:
+                await _pool.close()
+                _pool = None
 
 
 # ── FastMCP server ────────────────────────────────────────────────────────────

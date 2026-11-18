@@ -420,3 +420,28 @@ async def test_record_visit_pending_agent_is_rejected(pool):
         assert "pending admin approval" in visit["error"]
     finally:
         await _delete_project(pool, project_id)
+
+
+# ── Lifespan: one shared pool across concurrent sessions ──────────────────────
+
+@pytest.mark.asyncio
+async def test_lifespan_session_end_does_not_kill_other_sessions():
+    """Under streamable-HTTP every client session enters the lifespan. One
+    session ending must not close the pool out from under another live one
+    (regression: Hermes got 'DB pool not initialised' after any other client,
+    e.g. a `hermes mcp test` probe, disconnected)."""
+    assert mcp_server._pool is None and mcp_server._live_sessions == 0
+    long_lived = mcp_server.lifespan(mcp_server.mcp)
+    probe = mcp_server.lifespan(mcp_server.mcp)
+
+    await long_lived.__aenter__()
+    shared = mcp_server._pool
+    await probe.__aenter__()
+    assert mcp_server._pool is shared, "second session must reuse the pool"
+    await probe.__aexit__(None, None, None)
+
+    assert mcp_server._pool is shared, "pool closed while a session was still live"
+    assert json.loads(await mcp_server.list_all_projects(limit=1))["count"] >= 0
+
+    await long_lived.__aexit__(None, None, None)
+    assert mcp_server._pool is None and mcp_server._live_sessions == 0
