@@ -6,17 +6,30 @@ clients without going through the REST API — it reads the database directly.
 
 Run modes:
   python mcp_server.py           # stdio transport (Claude Code / Claude Desktop)
-  python mcp_server.py --sse     # SSE transport on port 8008 (remote / Cloudflare)
+  python mcp_server.py --http    # streamable-HTTP on port 8008 (remote / Cloudflare, recommended)
+  python mcp_server.py --sse     # SSE transport on port 8008 (legacy, remote clients that predate streamable-http)
 
 Register with Claude Code (stdio):
   claude mcp add codemanager -- python /path/to/codemanager.rkp/mcp_server.py
 
-Or add to ~/.claude/claude_desktop_config.json:
+Or add to the Claude Desktop config (macOS: ~/Library/Application Support/Claude/claude_desktop_config.json;
+Windows: %APPDATA%\Claude\claude_desktop_config.json — NOT ~/.claude/claude_desktop_config.json):
   {
     "mcpServers": {
       "codemanager": {
         "command": "python",
         "args": ["/path/to/codemanager.rkp/mcp_server.py"]
+      }
+    }
+  }
+
+From another machine on the LAN, without HTTPS, bridge through mcp-remote instead (the same
+config file, still not the Desktop "Add Custom Connector" UI, which requires HTTPS):
+  {
+    "mcpServers": {
+      "codemanager": {
+        "command": "npx",
+        "args": ["mcp-remote", "http://192.168.1.189:8008/mcp", "--allow-http"]
       }
     }
   }
@@ -53,6 +66,22 @@ from storage.visits import get_visits, log_visit  # noqa: E402
 MCP_AGENT_NAME = "mcp_local"
 MCP_SSE_PORT = 8008
 
+# get_project_detail's file_tree is unbounded — a dependency-heavy codebase
+# (e.g. PHP/Composer vendor trees) can serialize to multiple MB and exceed a
+# calling agent's tool-output limit outright. Past this size, drop the
+# per-file listing and return summary fields only (see get_project_detail).
+MAX_FILE_TREE_BYTES = 200_000
+
+# list_all_projects / search_projects rows carry three prose fields —
+# description, summary, status_note — that were together ~83% of the payload
+# (at 49 projects the full list serialized to 63KB and exceeded a calling
+# agent's tool-output limit outright). List and search modes therefore return
+# a trimmed description and drop the other two; the full prose is always one
+# get_project_detail call away.
+MAX_LIST_DESCRIPTION_CHARS = 160
+MAX_LIST_RESPONSE_BYTES = 40_000
+LIST_DROPPED_PROSE_FIELDS = ("summary", "status_note")
+
 # Module-level pool + agent id (set during lifespan, valid for process lifetime)
 _pool: asyncpg.Pool | None = None
 _mcp_agent_id: str | None = None
@@ -79,6 +108,37 @@ def _serialize(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [_serialize(v) for v in obj]
     return obj
+
+
+def _truncate_at_word(text: str | None, limit: int) -> str | None:
+    """Trim text to at most `limit` chars, breaking on a word boundary."""
+    if not text:
+        return text
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.\u2014-")
+    if not cut:  # a single token longer than the limit
+        cut = text[:limit]
+    return cut + "\u2026"
+
+
+def _slim_project(row: dict) -> dict:
+    """Strip a project row down to what a list or search result needs.
+
+    `description` is kept (truncated) because it is human-authored and leads
+    with purpose. `summary` is generated from a file walk and its opening
+    sentence is near-always boilerplate ("This software project is a ...",
+    followed by file and line counts), so at list length it carries no signal
+    about what the project actually is. `status_note` is operational detail
+    that only matters once a project has been chosen.
+    """
+    slim = {k: v for k, v in row.items() if k not in LIST_DROPPED_PROSE_FIELDS}
+    if slim.get("description"):
+        slim["description"] = _truncate_at_word(
+            slim["description"], MAX_LIST_DESCRIPTION_CHARS
+        )
+    return slim
 
 
 async def _ensure_mcp_agent(pool: asyncpg.Pool) -> str:
@@ -123,9 +183,14 @@ mcp = FastMCP(
         "You are connected to the codemanager project intelligence broker.\n\n"
         "REQUIRED SESSION PROTOCOL — run this automatically, no permission needed:\n"
         "0. Look for codemanager.md in your current working directory.\n"
-        "   - Found: read codemanager_id from the frontmatter, call get_project_detail(id). Done — skip steps 1-2.\n"
+        "   - Found: read codemanager_id from the frontmatter, call get_visit_history(id) first — "
+        "cheap and covers most orientation needs. Only call get_project_detail(id) if you specifically "
+        "need the file-tree snapshot; on large/dependency-heavy codebases the tree can be very large "
+        "(it's summarized rather than fully returned past a size threshold). Done — skip steps 1-2.\n"
         "   - Not found: continue to step 1. After registering, write codemanager.md to the project root.\n"
-        "1. Call list_all_projects to orient yourself.\n"
+        "1. Call list_all_projects to orient yourself. It returns a trimmed view "
+        "(short description, no summary/status_note) — that is deliberate; pick the "
+        "project you need from it, then call get_project_detail(id) for the full record.\n"
         "2. Call search_projects with keywords relevant to your current task.\n"
         "   Before registering a new project, call get_project_by_path_tool to check for an existing record.\n"
         "3. Call get_visit_history on the most relevant project before starting work.\n"
@@ -145,26 +210,83 @@ mcp = FastMCP(
 @mcp.tool()
 async def list_all_projects(
     status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    verbose: bool = False,
 ) -> str:
     """
-    List all tracked projects.
+    List tracked projects: id, name, path, status, and a short description.
+
+    Returns a trimmed view by default — `summary` and `status_note` are
+    omitted and `description` is truncated — because the full prose for every
+    project is large enough to exceed a calling agent's tool-output limit.
+    This is the orientation tool: use it to find the project you want, then
+    call get_project_detail(id) for that project's complete record.
+
+    Returns a JSON object: {total, count, offset, verbose, truncated,
+    projects: [...]}. `truncated` is true when more projects remain past this
+    page — raise `offset` to page through them.
 
     Args:
         status: Optional status filter. One of: registered, analyzing, partial,
                 analyzed, in_development, alpha, testing, production, stuck,
                 deprecated, archived.
+        limit: Maximum projects to return (default 100).
+        offset: Projects to skip before this page (default 0).
+        verbose: Return every field untruncated. Large — prefer
+                 get_project_detail for a single project. If the verbose
+                 response would exceed the safe response size it is downgraded
+                 to the trimmed view automatically, with a note saying so.
     """
     pool = _pool_required()
     rows = await list_projects(pool, status_filter=status)
     for r in rows:
         r.pop("embedding", None)
-    return json.dumps(_serialize(rows), indent=2)
+
+    total = len(rows)
+    offset = max(0, offset)
+    limit = max(1, limit)
+    page = [_serialize(r) for r in rows[offset:offset + limit]]
+
+    payload: dict[str, Any] = {
+        "total": total,
+        "count": len(page),
+        "offset": offset,
+        "verbose": verbose,
+        "truncated": offset + len(page) < total,
+        "projects": page if verbose else [_slim_project(r) for r in page],
+    }
+    body = json.dumps(payload, indent=2)
+
+    if verbose and len(body) > MAX_LIST_RESPONSE_BYTES:
+        payload["projects"] = [_slim_project(r) for r in page]
+        payload["verbose"] = False
+        payload["verbose_downgraded"] = (
+            f"verbose=True would have returned {len(body):,} bytes (over the "
+            f"{MAX_LIST_RESPONSE_BYTES:,}-byte safe limit); returned the "
+            f"trimmed view instead. Narrow with status/limit and retry, or "
+            f"call get_project_detail(id) for one project's full record."
+        )
+        body = json.dumps(payload, indent=2)
+
+    return body
 
 
 @mcp.tool()
 async def get_project_detail(project_id: str) -> str:
     """
     Get full detail for a project including its latest file-tree snapshot.
+
+    Prefer get_visit_history + search_projects for most orientation needs —
+    they're cheaper and cover almost everything. Only call this when you
+    specifically need the file tree.
+
+    On large or dependency-heavy codebases (e.g. PHP/Composer vendor trees)
+    the per-file listing can be very large. If the serialized file tree would
+    exceed a safe response size, it is omitted — summary fields (total_files,
+    languages, entry_points, key_files) are kept, with a note explaining the
+    omission. Use targeted tools (grep/find/git ls-tree) on the project path
+    instead if you need specific files.
 
     Args:
         project_id: UUID of the project.
@@ -177,7 +299,21 @@ async def get_project_detail(project_id: str) -> str:
     snapshot = await get_latest_snapshot(pool, project_id)
     if snapshot:
         snapshot.pop("embedding", None)
-        row["latest_snapshot"] = _serialize(snapshot)
+        serialized_snapshot = _serialize(snapshot)
+        file_tree = serialized_snapshot.get("file_tree")
+        if file_tree:
+            tree_bytes = len(json.dumps(file_tree))
+            if tree_bytes > MAX_FILE_TREE_BYTES:
+                file_count = len(file_tree)
+                serialized_snapshot["file_tree"] = None
+                serialized_snapshot["file_tree_omitted"] = (
+                    f"Omitted: {file_count} files, {tree_bytes:,} bytes serialized "
+                    f"(exceeds the {MAX_FILE_TREE_BYTES:,}-byte safe limit). "
+                    f"total_files/languages/entry_points/key_files below still "
+                    f"reflect the full snapshot. Use grep/find/git ls-tree on the "
+                    f"project path for specific files instead."
+                )
+        row["latest_snapshot"] = serialized_snapshot
     return json.dumps(_serialize(row), indent=2)
 
 
@@ -249,6 +385,7 @@ async def search_projects(
     limit: int = 10,
     status: str | None = None,
     include_github: bool = False,
+    verbose: bool = False,
 ) -> str:
     """
     Semantic similarity search across registered projects (and optionally GitHub).
@@ -256,11 +393,19 @@ async def search_projects(
     Embeds the query via nomic-embed-text (Ollama), runs pgvector cosine
     similarity across project embeddings, and optionally merges GitHub results.
 
+    Results are trimmed the same way list_all_projects trims them: `summary`
+    and `status_note` omitted, `description` truncated. Rank the hits from
+    this, then call get_project_detail(id) on the one you want.
+
     Args:
         query: Natural language query, e.g. "FastAPI auth with JWT tokens".
         limit: Maximum results to return (default 10).
         status: Optional status filter (e.g. "analyzed", "in_development").
         include_github: Also search GitHub and merge ranked results.
+        verbose: Return every field untruncated. Large — prefer
+                 get_project_detail for a single project. Downgraded to the
+                 trimmed view automatically if it would exceed the safe
+                 response size.
     """
     from analyzers.summarizer import embed_text  # noqa: PLC0415
 
@@ -336,16 +481,28 @@ async def search_projects(
     all_results = local_results + github_results
     all_results.sort(key=lambda r: r.get("similarity", 0.0), reverse=True)
 
-    return json.dumps(
-        _serialize({
-            "query": query,
-            "count": len(all_results),
-            "local_count": len(local_results),
-            "github_count": len(github_results),
-            "results": all_results,
-        }),
-        indent=2,
-    )
+    payload = _serialize({
+        "query": query,
+        "count": len(all_results),
+        "local_count": len(local_results),
+        "github_count": len(github_results),
+        "verbose": verbose,
+        "results": all_results if verbose else [_slim_project(r) for r in all_results],
+    })
+    body = json.dumps(payload, indent=2)
+
+    if verbose and len(body) > MAX_LIST_RESPONSE_BYTES:
+        payload["results"] = [_slim_project(r) for r in payload["results"]]
+        payload["verbose"] = False
+        payload["verbose_downgraded"] = (
+            f"verbose=True would have returned {len(body):,} bytes (over the "
+            f"{MAX_LIST_RESPONSE_BYTES:,}-byte safe limit); returned the "
+            f"trimmed view instead. Lower `limit` and retry, or call "
+            f"get_project_detail(id) for one project's full record."
+        )
+        body = json.dumps(payload, indent=2)
+
+    return body
 
 
 @mcp.tool()

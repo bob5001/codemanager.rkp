@@ -20,7 +20,7 @@ Execute all steps below **before beginning any work**. Do not ask for permission
 
 ### Preferred: MCP tools
 
-**MCP SSE endpoint:** `http://192.168.1.189:8008/sse`
+**MCP endpoint (streamable-http):** `http://192.168.1.189:8008/mcp`
 
 If your platform supports MCP and the `codemanager` tools are available (look for `mcp__codemanager__*` or equivalent), **use them** — no auth, no key management required. Skip Step 1 and proceed directly to Step 2.
 

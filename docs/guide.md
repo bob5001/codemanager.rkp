@@ -69,11 +69,12 @@ python -m venv .venv
 docker compose up -d
 ```
 
-**MCP SSE server (for remote MCP clients):**
+**MCP streamable-HTTP server (for remote MCP clients):**
 ```bash
-python mcp_server.py --sse          # direct
+python mcp_server.py --http         # direct, endpoint at /mcp
 docker compose --profile mcp up     # via Docker
 ```
+(`--sse` still exists but is legacy — kept only for clients that predate streamable-http.)
 
 **Cloudflare Tunnel:**
 
@@ -96,7 +97,7 @@ bash register_mcp.sh
 
 This runs `claude mcp add codemanager -- .venv/bin/python mcp_server.py` using the local virtualenv. Verify with `claude mcp list`.
 
-For Claude Desktop, add to `~/.claude/claude_desktop_config.json`:
+For Claude Desktop on the machine running the repo, add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) / `%APPDATA%\Claude\claude_desktop_config.json` (Windows) — not `~/.claude/claude_desktop_config.json`, which Desktop doesn't read:
 ```json
 {
   "mcpServers": {
@@ -107,6 +108,19 @@ For Claude Desktop, add to `~/.claude/claude_desktop_config.json`:
   }
 }
 ```
+
+From any other machine on the LAN — no repo checkout, no TLS — Desktop's "Add Custom Connector" UI requires HTTPS and rejects a plain-HTTP LAN URL. Hand-edit the same config file instead, using the `mcp-remote` stdio bridge (needs Node/`npx`):
+```json
+{
+  "mcpServers": {
+    "codemanager": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://192.168.1.189:8008/mcp", "--allow-http"]
+    }
+  }
+}
+```
+Fully quit (not just close the window) and relaunch Desktop after editing.
 
 ### Agent registration & approval
 
@@ -368,8 +382,14 @@ Example of a high-quality summary:
 
 ### Tool reference
 
-**`list_all_projects(status?)`**
-Returns a JSON array of all projects. `embedding` field is stripped. Useful for scanning what's tracked.
+**`list_all_projects(status?, limit?, offset?, verbose?)`**
+Returns `{total, count, offset, verbose, truncated, projects}`. `embedding` is stripped.
+
+The default view is **trimmed**: `summary` and `status_note` are omitted and `description` is cut to 160 chars on a word boundary. This is deliberate — those three fields were ~83% of the payload, and the full list of 49 projects serialized to 63KB, past a calling agent's tool-output limit. Trimmed, the same list is ~25KB.
+
+`description` survives the trim (rather than `summary`) because it is human-authored and leads with purpose; `summary` is generated from a file walk and opens with boilerplate plus file counts, so its first 160 chars say nothing useful about what a project is.
+
+This is the orientation tool — scan it, pick a project, then call `get_project_detail(id)` for the full record. `verbose=True` returns every field untrimmed, and downgrades itself to the trimmed view (with a `verbose_downgraded` note) if the response would exceed the byte cap. Page with `limit`/`offset`; `truncated` is true when more remain.
 
 **`get_project_detail(project_id)`**
 Returns the project row plus the latest snapshot's file tree and key findings. Check `latest_snapshot.file_tree` for directory structure.
@@ -377,8 +397,10 @@ Returns the project row plus the latest snapshot's file tree and key findings. C
 **`register_project(name, path?, github_url?, description?, analyze?)`**
 Creates the project row and, if `analyze=True` and `path` is given, runs a full local analysis synchronously. Returns the final project state.
 
-**`search_projects(query, limit?, status?, include_github?)`**
-Embeds `query` via nomic-embed-text and runs pgvector cosine similarity. `include_github=True` also fetches and ranks GitHub repositories. Returns `{query, count, local_count, github_count, results}`. Each result has `similarity` (0–1).
+**`search_projects(query, limit?, status?, include_github?, verbose?)`**
+Embeds `query` via nomic-embed-text and runs pgvector cosine similarity. `include_github=True` also fetches and ranks GitHub repositories. Returns `{query, count, local_count, github_count, verbose, results}`. Each result has `similarity` (0–1).
+
+Results are trimmed exactly as `list_all_projects` trims them, and for the same reason. Rank from the trimmed hits, then call `get_project_detail(id)` on the one you want. `verbose=True` behaves as it does there.
 
 **`get_visit_history(project_id, limit?)`**
 Returns up to `limit` visits, newest first. Filter mentally by `usefulness >= 3` for reliable findings.

@@ -223,8 +223,8 @@ bash register_mcp.sh
 **Tools failing with a DB error?**
 The MCP subprocess loads `.env` at startup. If you changed `DB_PASSWORD` mid-session, restart Claude Code to reload credentials.
 
-**Claude Desktop setup:**
-Add to `~/.claude/claude_desktop_config.json`:
+**Claude Desktop setup — on the machine running the repo (stdio, local venv):**
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows) — NOT `~/.claude/claude_desktop_config.json`, which Desktop does not read:
 ```json
 {
   "mcpServers": {
@@ -236,7 +236,21 @@ Add to `~/.claude/claude_desktop_config.json`:
 }
 ```
 
-**Check the Docker MCP container (SSE transport for non-Claude clients):**
+**Claude Desktop setup — from any OTHER machine on the LAN (no repo checkout, no TLS):**
+Desktop's own "Add Custom Connector" UI requires HTTPS and will reject a plain-HTTP LAN URL. Instead, hand-edit the same config file above and use the `mcp-remote` stdio bridge, which isn't subject to that check:
+```json
+{
+  "mcpServers": {
+    "codemanager": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://192.168.1.189:8008/mcp", "--allow-http"]
+    }
+  }
+}
+```
+Requires Node/`npx` on that machine. Fully quit (Cmd+Q, not just close the window) and relaunch Desktop after editing. If a broken connector-UI entry for `codemanager` already exists, remove it first so it doesn't collide.
+
+**Check the Docker MCP container (streamable-HTTP transport, endpoint `/mcp`):**
 ```bash
 docker compose --profile mcp logs mcp --tail=20
 curl http://localhost:8008/health
