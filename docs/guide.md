@@ -76,18 +76,20 @@ docker compose --profile mcp up     # via Docker
 ```
 (`--sse` still exists but is legacy — kept only for clients that predate streamable-http.)
 
-**Cloudflare Tunnel:**
+### Cloudflare Tunnel
 
-1. Install cloudflared: `brew install cloudflared`
-2. Authenticate: `cloudflared tunnel login`
-3. Create a tunnel: `cloudflared tunnel create codemanager`
-4. Fill in the tunnel ID in `cloudflare/config.yml`
-5. Create DNS routes:
-   ```bash
-   cloudflared tunnel route dns codemanager codemanager-api.<your-domain>
-   cloudflared tunnel route dns codemanager codemanager-mcp.<your-domain>
-   ```
-6. Start: `docker compose --profile tunnel up`
+Use this for cloud-hosted clients (claude.ai, Claude iOS, other hosted Claude apps). They connect from Anthropic's servers, so they need a public HTTPS URL. LAN clients keep using `http://192.168.1.189:8008/mcp` directly.
+
+`/mcp` has **no auth of its own**, so it must never be routed publicly without Access in front. claude.ai custom connectors support only OAuth or no auth (static headers are not available to personal accounts), so Access acts as the OAuth server through **Managed OAuth**.
+
+1. **Tunnel:** in Zero Trust → Networks → Tunnels, create a cloudflared tunnel and copy its token into `.env` as `TUNNEL_TOKEN`.
+2. **Public hostname:** `<sub>.robertrkoch.com` → service `HTTP`, URL `mcp:8008`. Leave the Host Header override empty.
+3. **Access app:** in Access → Applications, add a self-hosted app on that hostname with an Allow policy for your email. Under Advanced settings, enable **Managed OAuth** and add `https://claude.ai/api/mcp/auth_callback` to **Allowed redirect URIs**. The list starts empty, and until that URI is in it, Claude's client registration fails with `redirect_uri is not allowed by the account configuration`.
+4. **Start:** `docker compose --profile mcp --profile tunnel up -d`
+5. **Verify** without a token first: `curl -i https://<sub>.robertrkoch.com/mcp` must NOT return an MCP response. It should be a 401 with `WWW-Authenticate` or a redirect to `<team>.cloudflareaccess.com`.
+6. **Connect:** in claude.ai, go to Settings → Connectors → Add custom connector and enter `https://<sub>.robertrkoch.com/mcp`. Complete the Access login. The connector syncs to the mobile apps.
+
+Tunnelled requests carry `Cf-Connecting-IP`, and `api.deps.is_local_request` treats them as remote. Without that check they would look local, because the connector runs on this machine.
 
 ### Registering the MCP server with Claude Code
 

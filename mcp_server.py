@@ -227,8 +227,14 @@ async def _ensure_mcp_agent(pool: asyncpg.Pool) -> str:
 # into the global and closed it on exit, so any client disconnecting — even a
 # `hermes mcp test` probe — set _pool to None under every other live session,
 # whose next tool call then failed with "DB pool not initialised".)
+#
+# In stateless streamable-HTTP mode (see FastMCP(stateless_http=True) below)
+# the lifespan runs once per *request*, so closing at zero would rebuild the
+# pool on every tool call. _keep_pool_open is set for --http so the pool lives
+# for the whole process instead.
 _live_sessions = 0
 _pool_lock = asyncio.Lock()
+_keep_pool_open = False
 
 
 @asynccontextmanager
@@ -244,7 +250,7 @@ async def lifespan(server: FastMCP):
     finally:
         async with _pool_lock:
             _live_sessions -= 1
-            if _live_sessions == 0 and _pool is not None:
+            if _live_sessions == 0 and _pool is not None and not _keep_pool_open:
                 await _pool.close()
                 _pool = None
 
@@ -276,6 +282,12 @@ mcp = FastMCP(
     lifespan=lifespan,
     host="0.0.0.0",
     port=MCP_SSE_PORT,
+    # Stateless streamable-HTTP: no Mcp-Session-Id required. claude.ai's
+    # connector (via the Cloudflare tunnel) sends tools/call without a session
+    # ID, which stateful mode rejects with 400 "Missing session ID" (surfaced
+    # to the user as a 502). Every tool here is plain request/response, so
+    # nothing depends on server-side session state. Only affects --http.
+    stateless_http=True,
 )
 
 
@@ -703,6 +715,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.http:
+        _keep_pool_open = True
         mcp.run(transport="streamable-http")
     elif args.sse:
         mcp.run(transport="sse")

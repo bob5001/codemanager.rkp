@@ -52,6 +52,11 @@ def is_local_request(request: Request) -> bool:
     gating even when ADMIN_KEY is set — the gate exists for LAN/remote
     callers, not for the machine running the service.
     """
+    # Anything relayed by Cloudflare (Tunnel) carries Cf-Connecting-IP. The
+    # tunnel connector runs on this machine, so the TCP peer looks local even
+    # though the real caller is on the internet — never treat that as local.
+    if request.headers.get("cf-connecting-ip"):
+        return False
     host = request.client.host if request.client else None
     if host is None:
         return False

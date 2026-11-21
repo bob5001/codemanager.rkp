@@ -267,14 +267,11 @@ curl http://localhost:8008/health
 
 ## Remote access (Cloudflare Tunnel)
 
-See [docs/guide.md](docs/guide.md) for full setup. Quick version:
+Cloud clients (claude.ai, Claude iOS, and other hosted Claude apps) can't reach the LAN, so the MCP server is published through a dashboard-managed Cloudflare Tunnel behind Cloudflare Access. Only `/mcp` is exposed; REST stays LAN-only. See [docs/guide.md](docs/guide.md#cloudflare-tunnel) for setup. Quick version:
 
 ```bash
-brew install cloudflared
-cloudflared tunnel login
-cloudflared tunnel create codemanager
-# Fill tunnel ID into cloudflare/config.yml
-docker compose --profile tunnel up
+# Put TUNNEL_TOKEN=<token from the Zero Trust dashboard> in .env
+docker compose --profile mcp --profile tunnel up -d
 ```
 
 ---

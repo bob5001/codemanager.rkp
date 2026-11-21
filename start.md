@@ -15,6 +15,7 @@ Run the protocol below automatically at the start of a session. You do not need 
 | What | Where |
 |---|---|
 | MCP (streamable HTTP) | `http://192.168.1.189:8008/mcp` |
+| MCP from the internet (cloud clients: claude.ai, Claude iOS) | `https://cm.robertrkoch.com/mcp`, behind Cloudflare Access with OAuth. Add it as a custom connector; agents on the LAN should use the URL above. |
 | REST API | `http://localhost:8007` → `http://cm.lan:8007` → `http://192.168.1.189:8007` (try in order) |
 | This page | `GET /` on the REST API |
 | Interactive API docs | `GET /docs` (authoritative if anything here disagrees) |

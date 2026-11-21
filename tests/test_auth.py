@@ -127,12 +127,25 @@ async def test_health_no_auth(client: httpx.AsyncClient):
 # when ADMIN_KEY is set in this repo's .env — it looks like a local caller.
 # These tests target that behavior directly.
 
-def _fake_request(client_host: str | None):
-    """Minimal Starlette Request exposing just `.client` for is_local_request."""
+def _fake_request(client_host: str | None, headers: dict[str, str] | None = None):
+    """Minimal Starlette Request exposing `.client` and `.headers` for is_local_request."""
     from starlette.requests import Request as StarletteRequest
 
-    scope = {"type": "http", "client": (client_host, 12345) if client_host else None}
+    scope = {
+        "type": "http",
+        "client": (client_host, 12345) if client_host else None,
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+    }
     return StarletteRequest(scope)
+
+
+def test_is_local_request_cloudflare_tunnel_is_remote(monkeypatch):
+    """Tunnel traffic arrives from a local peer (cloudflared runs on this box)
+    but carries Cf-Connecting-IP — it must not bypass the approval gate."""
+    monkeypatch.setattr("api.deps._DOCKER_GATEWAY", "192.168.147.1")
+    cf = {"Cf-Connecting-IP": "203.0.113.9"}
+    assert is_local_request(_fake_request("127.0.0.1", cf)) is False
+    assert is_local_request(_fake_request("192.168.147.1", cf)) is False
 
 
 def test_is_local_request_loopback():
